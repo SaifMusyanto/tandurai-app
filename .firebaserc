@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "default": "tandurai-ai",
+    "demo": "tandurai-ai",
+    "production": "tumbara-bea7a"
+  }
+}

@@ -1,0 +1,293 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "users": {
+      "$uid": {
+        ".read": "auth != null && ($uid === auth.uid || root.child('users').child(auth.uid).child('access').child('role').val() === 'admin')",
+        "profile": {
+          ".write": "auth != null && $uid === auth.uid",
+          ".validate": "newData.hasChildren(['username', 'email']) && newData.child('username').isString() && newData.child('username').val().length > 0 && newData.child('username').val().length <= 100 && newData.child('email').isString() && newData.child('email').val() === auth.token.email",
+          "username": {
+            ".validate": "newData.isString()"
+          },
+          "email": {
+            ".validate": "newData.isString()"
+          },
+          "createdAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "updatedAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "$other": {
+            ".validate": false
+          }
+        },
+        "settings": {
+          ".write": "auth != null && $uid === auth.uid"
+        },
+        "access": {
+          ".write": false,
+          "role": {
+            ".validate": "newData.isString() && (newData.val() === 'admin' || newData.val() === 'manager' || newData.val() === 'operator' || newData.val() === 'viewer')"
+          },
+          "farms": {
+            "$farmId": {
+              ".validate": "newData.val() === true"
+            }
+          },
+          "$other": {
+            ".validate": false
+          }
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+    "tumbara": {
+      "farms": {
+        "$farmId": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('farms').child($farmId).val() === true)",
+          ".write": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || (root.child('users').child(auth.uid).child('access').child('role').val() === 'manager' && root.child('users').child(auth.uid).child('access').child('farms').child($farmId).val() === true)) && newData.exists()",
+          ".validate": "newData.hasChildren(['name', 'timezone', 'location', 'status', 'createdAt', 'updatedAt']) && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 100 && newData.child('timezone').val() === 'Asia/Jakarta' && newData.child('location').isString() && newData.child('status').isString() && (newData.child('status').val() === 'active' || newData.child('status').val() === 'inactive') && newData.child('createdAt').isNumber() && newData.child('updatedAt').isNumber()"
+        }
+      },
+      "kumbungs": {
+        "$kumbungId": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('farms').child(data.child('farmId').val()).val() === true)",
+          ".write": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || (root.child('users').child(auth.uid).child('access').child('role').val() === 'manager' && root.child('users').child(auth.uid).child('access').child('farms').child(newData.child('farmId').val()).val() === true)) && newData.exists()",
+          ".validate": "newData.hasChildren(['farmId', 'name', 'capacityBaglog', 'status', 'createdBy', 'createdAt', 'updatedAt']) && newData.child('farmId').isString() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('capacityBaglog').isNumber() && newData.child('capacityBaglog').val() >= 1 && newData.child('status').isString() && (newData.child('status').val() === 'active' || newData.child('status').val() === 'maintenance' || newData.child('status').val() === 'inactive') && newData.child('createdBy').isString() && newData.child('createdAt').isNumber() && newData.child('updatedAt').isNumber() && (!data.exists() || (newData.child('farmId').val() === data.child('farmId').val() && newData.child('createdAt').val() === data.child('createdAt').val()))"
+        }
+      },
+      "baglogBatches": {
+        "$batchId": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('farms').child(data.child('farmId').val()).val() === true)",
+          ".write": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || (root.child('users').child(auth.uid).child('access').child('role').val() === 'manager' && root.child('users').child(auth.uid).child('access').child('farms').child(newData.child('farmId').val()).val() === true)) && newData.exists()",
+          ".validate": "newData.hasChildren(['farmId', 'kumbungId', 'startedAt', 'baglogCountInitial', 'baglogCountActive', 'substrateType', 'growthStage', 'contaminationPct', 'status', 'createdBy', 'createdAt', 'updatedAt', 'schemaVersion']) && newData.child('farmId').val() === root.child('tumbara').child('kumbungs').child(newData.child('kumbungId').val()).child('farmId').val() && newData.child('startedAt').isNumber() && newData.child('startedAt').val() <= now + 300000 && newData.child('baglogCountInitial').isNumber() && newData.child('baglogCountInitial').val() >= 1 && newData.child('baglogCountActive').isNumber() && newData.child('baglogCountActive').val() >= 0 && newData.child('baglogCountActive').val() <= newData.child('baglogCountInitial').val() && newData.child('substrateType').isString() && (newData.child('growthStage').val() === 'inoculation' || newData.child('growthStage').val() === 'incubation' || newData.child('growthStage').val() === 'fruiting' || newData.child('growthStage').val() === 'harvesting' || newData.child('growthStage').val() === 'completed') && newData.child('contaminationPct').isNumber() && newData.child('contaminationPct').val() >= 0 && newData.child('contaminationPct').val() <= 100 && (newData.child('status').val() === 'active' || newData.child('status').val() === 'completed' || newData.child('status').val() === 'cancelled') && newData.child('createdBy').isString() && newData.child('createdAt').isNumber() && newData.child('updatedAt').isNumber() && newData.child('schemaVersion').val() === 'baglog-batch-v1' && (!data.exists() || (newData.child('farmId').val() === data.child('farmId').val() && newData.child('kumbungId').val() === data.child('kumbungId').val() && newData.child('createdAt').val() === data.child('createdAt').val()))"
+        }
+      },
+      "monitoring": {
+        "sensor1": {
+          ".read": "auth != null",
+          ".write": false
+        },
+        "$kumbungId": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val()).val() === true)",
+          "$sensorId": {
+            ".write": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || ((root.child('users').child(auth.uid).child('access').child('role').val() === 'manager' || root.child('users').child(auth.uid).child('access').child('role').val() === 'operator') && root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val()).val() === true))",
+            ".validate": "newData.hasChildren(['timestamp', 'farmId', 'kumbungId', 'sensorId', 'schemaVersion', 'quality']) && newData.child('timestamp').isNumber() && newData.child('timestamp').val() > 0 && newData.child('timestamp').val() <= now + 300000 && newData.child('farmId').val() === root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val() && newData.child('kumbungId').val() === $kumbungId && newData.child('sensorId').val() === $sensorId && newData.child('schemaVersion').val() === 'telemetry-v1'",
+            "timestamp": {
+              ".validate": "newData.isNumber()"
+            },
+            "farmId": {
+              ".validate": "newData.isString()"
+            },
+            "kumbungId": {
+              ".validate": "newData.isString()"
+            },
+            "sensorId": {
+              ".validate": "newData.isString()"
+            },
+            "schemaVersion": {
+              ".validate": "newData.val() === 'telemetry-v1'"
+            },
+            "temperature": {
+              ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= -10 && newData.val() <= 60)"
+            },
+            "humidity": {
+              ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 100)"
+            },
+            "co2": {
+              ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000)"
+            },
+            "pressure": {
+              ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 800 && newData.val() <= 1200)"
+            },
+            "airflow": {
+              ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 50)"
+            },
+            "substrateMoisture": {
+              ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 100)"
+            },
+            "light": {
+              ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 200000)"
+            },
+            "fanStatus": {
+              ".validate": "!newData.exists() || newData.isBoolean()"
+            },
+            "fanSpeedPct": {
+              ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 100)"
+            },
+            "mistingStatus": {
+              ".validate": "!newData.exists() || newData.isBoolean()"
+            },
+            "quality": {
+              ".validate": "newData.hasChildren(['status']) && (newData.child('status').val() === 'valid' || newData.child('status').val() === 'degraded' || newData.child('status').val() === 'invalid')"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        }
+      },
+      "history": {
+        "$kumbungId": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val()).val() === true)",
+          "$date": {
+            ".indexOn": [
+              "timestamp"
+            ],
+            "$entryId": {
+              ".write": "auth != null && !data.exists() && auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || ((root.child('users').child(auth.uid).child('access').child('role').val() === 'manager' || root.child('users').child(auth.uid).child('access').child('role').val() === 'operator') && root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val()).val() === true))",
+              ".validate": "newData.hasChildren(['timestamp', 'farmId', 'kumbungId', 'sensorId', 'schemaVersion', 'quality', 'bucketStart']) && newData.child('timestamp').isNumber() && newData.child('timestamp').val() > 0 && newData.child('timestamp').val() <= now + 300000 && newData.child('farmId').val() === root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val() && newData.child('kumbungId').val() === $kumbungId && newData.child('sensorId').isString() && newData.child('schemaVersion').val() === 'telemetry-v1' && newData.child('bucketStart').isNumber() && newData.child('bucketStart').val() === newData.child('timestamp').val() - (newData.child('timestamp').val() % 600000)",
+              "timestamp": {
+                ".validate": "newData.isNumber()"
+              },
+              "farmId": {
+                ".validate": "newData.isString()"
+              },
+              "kumbungId": {
+                ".validate": "newData.isString()"
+              },
+              "sensorId": {
+                ".validate": "newData.isString()"
+              },
+              "schemaVersion": {
+                ".validate": "newData.val() === 'telemetry-v1'"
+              },
+              "temperature": {
+                ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= -10 && newData.val() <= 60)"
+              },
+              "humidity": {
+                ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 100)"
+              },
+              "co2": {
+                ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000)"
+              },
+              "pressure": {
+                ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 800 && newData.val() <= 1200)"
+              },
+              "airflow": {
+                ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 50)"
+              },
+              "substrateMoisture": {
+                ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 100)"
+              },
+              "light": {
+                ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 200000)"
+              },
+              "fanStatus": {
+                ".validate": "!newData.exists() || newData.isBoolean()"
+              },
+              "fanSpeedPct": {
+                ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 100)"
+              },
+              "mistingStatus": {
+                ".validate": "!newData.exists() || newData.isBoolean()"
+              },
+              "quality": {
+                ".validate": "newData.hasChildren(['status']) && (newData.child('status').val() === 'valid' || newData.child('status').val() === 'degraded' || newData.child('status').val() === 'invalid')"
+              },
+              "$other": {
+                ".validate": false
+              },
+              "bucketStart": {
+                ".validate": "newData.isNumber()"
+              }
+            }
+          }
+        }
+      },
+      "harvestEvents": {
+        "$kumbungId": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val()).val() === true)",
+          ".indexOn": [
+            "harvestedAt"
+          ],
+          "$eventId": {
+            ".write": "auth != null && !data.exists() && newData.exists() && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || ((root.child('users').child(auth.uid).child('access').child('role').val() === 'manager' || root.child('users').child(auth.uid).child('access').child('role').val() === 'operator') && root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val()).val() === true))",
+            ".validate": "newData.hasChildren(['farmId', 'kumbungId', 'batchId', 'harvestedAt', 'weightKg', 'grade', 'gradeAPct', 'recordedBy', 'createdAt', 'schemaVersion']) && newData.child('farmId').val() === root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val() && newData.child('kumbungId').val() === $kumbungId && root.child('tumbara').child('baglogBatches').child(newData.child('batchId').val()).child('kumbungId').val() === $kumbungId && newData.child('harvestedAt').isNumber() && newData.child('harvestedAt').val() >= root.child('tumbara').child('baglogBatches').child(newData.child('batchId').val()).child('startedAt').val() && newData.child('harvestedAt').val() <= now + 300000 && newData.child('weightKg').isNumber() && newData.child('weightKg').val() > 0 && newData.child('weightKg').val() <= 10000 && (newData.child('grade').val() === 'A' || newData.child('grade').val() === 'B' || newData.child('grade').val() === 'C' || newData.child('grade').val() === 'mixed') && newData.child('gradeAPct').isNumber() && newData.child('gradeAPct').val() >= 0 && newData.child('gradeAPct').val() <= 100 && newData.child('recordedBy').val() === auth.uid && newData.child('createdAt').isNumber() && newData.child('schemaVersion').val() === 'harvest-event-v1' && (!newData.child('notes').exists() || newData.child('notes').isString()) && ((!newData.child('correctsEventId').exists() && !newData.child('correctionReason').exists()) || (newData.child('correctsEventId').isString() && newData.child('correctsEventId').val() !== $eventId && root.child('tumbara').child('harvestEvents').child($kumbungId).child(newData.child('correctsEventId').val()).exists() && !root.child('tumbara').child('harvestEvents').child($kumbungId).child(newData.child('correctsEventId').val()).child('correctsEventId').exists() && newData.child('correctionReason').isString() && newData.child('correctionReason').val().length > 0 && newData.child('correctionReason').val().length <= 300))"
+          }
+        }
+      },
+      "aiRequests": {
+        "$kumbungId": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val()).val() === true)",
+          ".write": "auth != null && newData.exists() && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || ((root.child('users').child(auth.uid).child('access').child('role').val() === 'manager' || root.child('users').child(auth.uid).child('access').child('role').val() === 'operator') && root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val()).val() === true))",
+          ".validate": "newData.hasChildren(['requestedAt', 'requestedBy', 'asOfDate', 'batchId', 'status', 'mode', 'schemaVersion']) && newData.child('requestedAt').isNumber() && newData.child('requestedAt').val() <= now + 300000 && newData.child('requestedAt').val() >= now - 300000 && newData.child('requestedBy').val() === auth.uid && newData.child('asOfDate').isString() && newData.child('asOfDate').val().length === 10 && newData.child('batchId').isString() && root.child('tumbara').child('baglogBatches').child(newData.child('batchId').val()).child('kumbungId').val() === $kumbungId && root.child('tumbara').child('baglogBatches').child(newData.child('batchId').val()).child('status').val() === 'active' && newData.child('status').val() === 'pending' && newData.child('mode').val() === 'hybrid_synthetic_fill' && newData.child('schemaVersion').val() === 'ai-request-v1'"
+        }
+      },
+      "aiFeaturesDaily": {
+        "$kumbungId": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val()).val() === true)",
+          ".write": false,
+          ".indexOn": [
+            "sourceWindowEnd"
+          ]
+        }
+      },
+      "aiForecasts": {
+        "$kumbungId": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val()).val() === true)",
+          ".write": false,
+          "history": {
+            ".indexOn": [
+              "generatedAt"
+            ]
+          }
+        }
+      },
+      "aiActuals": {
+        "$kumbungId": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val()).val() === true)",
+          ".write": false
+        }
+      },
+      "aiWorker": {
+        "status": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('role').val() === 'manager')",
+          ".write": false
+        }
+      },
+      "config": {
+        ".read": "auth != null",
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('role').val() === 'manager')"
+      },
+      "harvest": {
+        "config": {
+          ".read": "auth != null",
+          ".write": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('role').val() === 'manager')"
+        }
+      },
+      "dailyTelemetry": {
+        "$kumbungId": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val()).val() === true)",
+          ".write": false,
+          "$date": {
+            ".validate": "newData.hasChildren(['date', 'kumbungId', 'sampleCount', 'sourceWindowStart', 'sourceWindowEnd', 'schemaVersion']) && newData.child('date').val() === $date && newData.child('kumbungId').val() === $kumbungId && newData.child('sampleCount').isNumber() && newData.child('sampleCount').val() >= 0 && newData.child('sourceWindowStart').isNumber() && newData.child('sourceWindowEnd').isNumber() && newData.child('schemaVersion').val() === 'telemetry-daily-v1'"
+          }
+        }
+      },
+      "farmKumbungs": {
+        "$farmId": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('farms').child($farmId).val() === true)",
+          "$kumbungId": {
+            ".write": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || (root.child('users').child(auth.uid).child('access').child('role').val() === 'manager' && root.child('users').child(auth.uid).child('access').child('farms').child($farmId).val() === true)) && newData.val() === true",
+            ".validate": "newData.val() === true"
+          }
+        }
+      },
+      "kumbungBatches": {
+        "$kumbungId": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val()).val() === true)",
+          "$batchId": {
+            ".write": "auth != null && (root.child('users').child(auth.uid).child('access').child('role').val() === 'admin' || (root.child('users').child(auth.uid).child('access').child('role').val() === 'manager' && root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('kumbungs').child($kumbungId).child('farmId').val()).val() === true)) && newData.val() === true",
+            ".validate": "newData.val() === true"
+          }
+        }
+      }
+    }
+  }
+}

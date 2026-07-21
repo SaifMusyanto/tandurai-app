@@ -1,0 +1,32 @@
+# Dependencies and build output
+node_modules/
+**/node_modules/
+dist/
+
+# Environment files (examples remain tracked)
+apps/web/.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Local-only files
+*.local
+*.log
+
+# Python AI Worker runtime and credentials
+local_ai_worker/.venv/
+local_ai_worker/.env
+local_ai_worker/runtime/
+local_ai_worker/logs/
+local_ai_worker/state/
+local_ai_worker/credentials/
+firebase-admin*.json
+*service-account*.json
+
+# Python generated files
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/

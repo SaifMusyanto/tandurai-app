@@ -1,0 +1,50 @@
+{
+  "farms": {
+    "FARM-01": {
+      "name": "Tandurai Demo Farm",
+      "timezone": "Asia/Jakarta",
+      "location": "Sidoarjo, Indonesia",
+      "status": "active",
+      "createdAt": 1784077200000,
+      "updatedAt": 1784077200000
+    }
+  },
+  "farmKumbungs": {
+    "FARM-01": {
+      "FARM-01-K01": true
+    }
+  },
+  "kumbungs": {
+    "FARM-01-K01": {
+      "farmId": "FARM-01",
+      "name": "Kumbung Demo 01",
+      "capacityBaglog": 1200,
+      "status": "active",
+      "createdBy": "REPLACE_WITH_DEMO_UID",
+      "createdAt": 1784077200000,
+      "updatedAt": 1784077200000
+    }
+  },
+  "kumbungBatches": {
+    "FARM-01-K01": {
+      "FARM-01-K01-B01": true
+    }
+  },
+  "baglogBatches": {
+    "FARM-01-K01-B01": {
+      "farmId": "FARM-01",
+      "kumbungId": "FARM-01-K01",
+      "startedAt": 1781485200000,
+      "baglogCountInitial": 1000,
+      "baglogCountActive": 1000,
+      "substrateType": "campuran",
+      "growthStage": "fruiting",
+      "contaminationPct": 0,
+      "status": "active",
+      "createdBy": "REPLACE_WITH_DEMO_UID",
+      "createdAt": 1781485200000,
+      "updatedAt": 1784077200000,
+      "schemaVersion": "baglog-batch-v1"
+    }
+  }
+}
