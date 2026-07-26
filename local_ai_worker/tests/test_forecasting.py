@@ -10,10 +10,10 @@ class FakeRuntime:
         contamination = float(value["features"].get("contamination_rate_pct") or 0)
         factor = 1 - contamination / 100
         return {
-            "forecastKg": 403.4 * factor, "p10Kg": 302.55 * factor,
-            "p50Kg": 403.4 * factor, "p90Kg": 504.25 * factor,
+            "forecastKg": 600.0 * factor, "p10Kg": 500.0 * factor,
+            "p50Kg": 600.0 * factor, "p90Kg": 700.0 * factor,
             "harvestStartDay": 28, "harvestEndDay": 75,
-            "yieldKgPerBaglog": 0.4034,
+            "yieldKgPerBaglog": 0.6,
         }
 
     def predict(self, payload):
@@ -44,19 +44,19 @@ def payload():
     }
 
 
-def test_total_batch_forecast_uses_300_to_500_kg_per_1000_baglogs():
+def test_total_batch_forecast_uses_500_to_700_kg_per_1000_baglogs():
     result = build_forecast(FakeRuntime(), payload(), {"mode": "observed"}, generated_at=123)
     assert result["forecastType"] == "batch_total"
-    assert result["forecastKg"] == 403.4
-    assert (result["p10Kg"], result["p50Kg"], result["p90Kg"]) == (302.55, 403.4, 504.25)
-    assert result["supplyCommitmentKg"] == 302
+    assert result["forecastKg"] == 600.0
+    assert (result["p10Kg"], result["p50Kg"], result["p90Kg"]) == (500.0, 600.0, 700.0)
+    assert result["supplyCommitmentKg"] == 500
 
 
 def test_contamination_reduces_total_batch_estimate():
     value = payload()
     value["features"]["contamination_rate_pct"] = 10
     result = build_forecast(FakeRuntime(), value, {"mode": "observed"}, generated_at=123)
-    assert (result["p10Kg"], result["p50Kg"], result["p90Kg"]) == (272.3, 363.06, 453.82)
+    assert (result["p10Kg"], result["p50Kg"], result["p90Kg"]) == (450.0, 540.0, 630.0)
 
 
 def test_demo_provenance_is_never_hidden():

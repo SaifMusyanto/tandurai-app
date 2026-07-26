@@ -48,11 +48,11 @@ Halaman menangani:
 
 ## Verifikasi
 
-- Test frontend: 5/5 lulus.
-- Test worker: 24/24 lulus.
+- Test frontend: 7/7 lulus.
+- Test worker: 25/25 lulus.
 - ESLint: lulus tanpa error.
 - Production build Vite: lulus.
-- Test mencakup patokan 300–500 kg per 1.000 baglog sehat, koreksi kontaminasi, rentang tanggal satu siklus, pemisahan batch, normalisasi interval, state UI, serta sorting history.
+- Test mencakup prior hasil wawancara 500–700 kg per 1.000 baglog sehat, koreksi kontaminasi, rentang tanggal satu siklus, pemisahan batch, normalisasi interval, state UI, serta sorting history.
 - Credential Firebase Admin dan file artefak model tetap berada di worker lokal, bukan frontend.
 
 ## Cara mencoba

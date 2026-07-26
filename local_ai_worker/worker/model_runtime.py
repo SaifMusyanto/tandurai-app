@@ -112,6 +112,7 @@ class HarvestModelRuntime:
                 "version": f"batch-yield-{self.batch_sha256['yieldPoint'][:12]}",
                 "artifactSha256": self.batch_sha256,
                 "training": self.batch_manifest.get("data"),
+                "calibrationPrior": self.batch_manifest.get("calibrationPrior"),
                 "testMetrics": self.batch_manifest.get("testMetrics"),
                 "fieldValidated": False,
                 "claimStatus": self.batch_manifest.get("claimStatus"),
@@ -346,4 +347,3 @@ class HarvestModelRuntime:
         raw_quantiles = self.quantile_model.predict(row)
         quantiles = {q: float(raw_quantiles[q][0]) * scale for q in (0.10, 0.50, 0.90)}
         return point, quantiles
-
