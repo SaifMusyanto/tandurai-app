@@ -15,7 +15,7 @@ Indeks navigasi arsitektur aplikasi. Pemetaan bersumber dari source code `apps/w
 
 - Dashboard budidaya jamur Tandurai; React 18 + JavaScript/JSX + Vite 7.
 - Routing memakai `react-router-dom`; Firebase Auth menjadi gerbang sebelum dashboard ditampilkan.
-- Firebase Realtime Database adalah backend utama; Firebase Functions callable menjadi jalur tepercaya untuk membership dan provisioning perangkat. Tidak ditemukan Redux/Zustand/Jotai.
+- Firebase Realtime Database adalah backend utama. Membership farm dan manajemen perangkat ditulis langsung dari aplikasi owner sebagai multipath update yang divalidasi `database.rules.json` (tanpa Cloud Functions/server). Tidak ditemukan Redux/Zustand/Jotai.
 - Entry: `src/main.jsx` → `src/App.jsx` → AuthPage atau DashboardLayout → page → hook/service/Firebase.
 
 ## Core logic flow
@@ -24,7 +24,8 @@ Indeks navigasi arsitektur aplikasi. Pemetaan bersumber dari source code `apps/w
 Browser → main.jsx → App.jsx [Firebase Auth gate]
   → AuthPage (anonim) | BrowserRouter → DashboardLayout → Page
   → Hook/state lokal → lib service/Firebase SDK → Firebase Realtime Database
-  → Device management → Firebase Functions callable → Admin SDK → registry/config gateway di RTDB
+  → Device management → deviceManagementService → multipath update (deviceManagementPlan) → Rules → registry/config gateway di RTDB
+  Gateway ESP32 → Anonymous Auth REST → RTDB REST (UID dipetakan ke gateway oleh owner)
 ```
 
 Flow inti: telemetry (`/monitoring`, `/historical`, `/analytics`) → `telemetryService` → RTDB; operasi (`/operations`) → `operationsService` → RTDB; forecast (`/ai-forecast`) → hook → `forecastService` → RTDB; Home → telemetry + Open-Meteo + endpoint chat opsional.

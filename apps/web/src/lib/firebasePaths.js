@@ -1,16 +1,21 @@
-const defaultKumbungId = import.meta.env.VITE_DEFAULT_KUMBUNG_ID || 'FARM-01-K01';
-const defaultSensorId = import.meta.env.VITE_DEFAULT_SENSOR_ID || 'SNS-0101';
+// import.meta.env hanya tersedia di Vite; test Node mengimpor modul ini tanpa env.
+const env = import.meta.env ?? {};
+const defaultKumbungId = env.VITE_DEFAULT_KUMBUNG_ID || 'FARM-01-K01';
+const defaultSensorId = env.VITE_DEFAULT_SENSOR_ID || 'SNS-0101';
 
 export const FIREBASE_PATHS = Object.freeze({
   defaultKumbungId,
   defaultSensorId,
-  legacySensor: import.meta.env.VITE_LEGACY_SENSOR_PATH || 'tumbara/monitoring/sensor1',
+  legacySensor: env.VITE_LEGACY_SENSOR_PATH || 'tumbara/monitoring/sensor1',
   farm: farmId => `tumbara/farms/${farmId}`,
   farmMembers: farmId => `tumbara/farmMembers/${farmId}`,
   farmMember: (farmId, uid) => `tumbara/farmMembers/${farmId}/${uid}`,
+  farmAccess: (uid, farmId) => `users/${uid}/access/farms/${farmId}`,
   farmRole: (uid, farmId) => `users/${uid}/access/farmRoles/${farmId}`,
+  userDirectoryEntry: emailKey => `userDirectory/${emailKey}`,
   gateways: 'tumbara/gateways',
   gateway: gatewayId => `tumbara/gateways/${gatewayId}`,
+  gatewayAuthUid: authUid => `tumbara/gatewayAuthUids/${authUid}`,
   gatewayConfig: gatewayId => `tumbara/gatewayConfigs/${gatewayId}`,
   gatewaySensors: gatewayId => `tumbara/gatewaySensors/${gatewayId}`,
   sensorCatalog: 'tumbara/sensors',

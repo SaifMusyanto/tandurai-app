@@ -4,7 +4,7 @@
 
 Mendukung banyak farm, banyak kumbung per farm, banyak sensor per kumbung, dan karyawan yang dikelola pada tingkat farm. Gateway dimiliki satu farm dan dapat mengumpulkan data dari sensor di beberapa kumbung dalam farm yang sama. Gateway membaca sensor melalui protokol hardware yang sudah tersedia dan mengunggah telemetry langsung ke Firebase Realtime Database (RTDB).
 
-Dokumen ini menjadi rancangan dan backlog implementasi. Perubahan Fase 1 saat ini masih lokal/emulator dan belum diterapkan ke Firebase live. Implementasi harus menjaga pembacaan dan riwayat telemetry yang sudah tersimpan.
+Dokumen ini menjadi rancangan dan backlog implementasi. Fase 1 selesai secara lokal/emulator dan belum diterapkan ke Firebase live (lihat [progres Fase 1](./progres-fase-1-fondasi-hirarki-sensor.md)). Seluruh rancangan berjalan **tanpa server**: tidak ada Cloud Functions/Admin SDK untuk membership maupun perangkat. Implementasi harus menjaga pembacaan dan riwayat telemetry yang sudah tersimpan.
 
 ## 2. Kondisi awal yang diketahui
 
@@ -56,6 +56,10 @@ users/{uid}/profile/
 users/{uid}/access/
   farms/{farmId}: true
   farmRoles/{farmId}: "owner" | "operator"
+
+userDirectory/{emailKey}/        # emailKey = email lowercase, '.' → ','
+  uid: "{uid}"                   # ditulis user sendiri bila email terverifikasi
+  updatedAt: 1784091139516
 
 tumbara/farms/{farmId}/
   id: "{farmId}"
@@ -145,7 +149,7 @@ tumbara/history/{kumbungId}/{tanggal}/{recordId}/
 
 ### 4.1 Catatan integritas RTDB
 
-- `farmMembers` adalah data keanggotaan yang dikelola oleh alur undangan; `users/{uid}/access/farms` adalah indeks role untuk memuat farm user. Operator ditambahkan oleh owner dari akun Firebase Auth dengan email terverifikasi. Perubahan membership/index dilakukan trusted operation secara multi-location atomik.
+- `farmMembers` adalah data keanggotaan; `users/{uid}/access/farms` adalah indeks role untuk memuat farm user. Operator ditambahkan oleh owner dari akun Firebase Auth dengan email terverifikasi yang tercatat di `userDirectory`. Owner menulis membership dan indeks dalam satu multipath update; Rules memvalidasi konsistensinya.
 - `farmKumbungs`, `kumbungSensors`, dan `gatewaySensors` adalah indeks. Sumber metadata tetap di node farm, kumbung, sensor, dan gateway.
 - Penambahan/pemindahan sensor harus memperbarui katalog, indeks relasi, dan konfigurasi gateway secara bersamaan, atau melewati status transisi yang eksplisit jika dua gateway terlibat.
 - Kredensial perangkat, private key, atau token permanen tidak disimpan pada node yang dapat dibaca klien web. Jika metadata auth perlu direferensikan, simpan hanya ID/status dan batasi pada backend tepercaya.
@@ -158,8 +162,8 @@ tumbara/history/{kumbungId}/{tanggal}/{recordId}/
 
 1. Owner membuat farm atau menjadi owner farm yang sudah ada.
 2. Owner menambahkan akun karyawan berdasarkan email terverifikasi; karyawan baru mendapat role `operator`. Owner sendiri tercatat sebagai `owner`.
-3. Backend mencari akun Firebase Auth dengan email terverifikasi, lalu mengaktifkan membership `operator` dan indeks akses secara atomik. Akun yang belum terdaftar harus membuat akun terlebih dahulu.
-4. Backend menulis `farmMembers/{farmId}/{uid}`, `users/{uid}/access/farms/{farmId}=true`, dan `users/{uid}/access/farmRoles/{farmId}="operator"` dalam satu multipath update.
+3. Aplikasi owner mencari UID di `userDirectory/{emailKey}`. Entri itu dibuat oleh user sendiri saat login bila emailnya terverifikasi; akun yang belum terdaftar/terverifikasi harus melakukannya terlebih dahulu.
+4. Aplikasi owner menulis `farmMembers/{farmId}/{uid}`, `users/{uid}/access/farms/{farmId}=true`, dan `users/{uid}/access/farmRoles/{farmId}="operator"` dalam satu multipath update.
 5. Operator melihat seluruh kumbung farm. Tidak ada assignment akses atau role per kumbung.
 6. Owner dapat mencabut operator; membership dan indeks akses dihapus secara atomik. Owner tidak dapat dicabut melalui fitur pengelolaan operator.
 
@@ -223,7 +227,7 @@ Alur pairing:
 
 Web API key Firebase adalah identifier project, bukan password. Keamanan berasal dari Firebase Auth, pairing yang disetujui owner, mapping UID→gateway, serta RTDB Rules. Jangan menyimpan Admin private key, service account, atau kredensial owner di ESP32. Jika NVS/refresh token hilang, lakukan pairing ulang dengan UID baru.
 
-**Perubahan sebelum deploy:** Rules dan kode Fase 1 di repository masih memakai custom claims serta callable `createGateway`. Ganti jalur itu dengan Anonymous Auth, registry UID, dan pairing owner; uji allow/deny di Emulator sebelum digunakan.
+**Status:** Rules dan service sudah memakai Anonymous Auth, registry UID dua arah, dan pairing owner; custom claims serta callable `createGateway` telah dihapus. Allow/deny diuji di Emulator (`npm run test:rules`, `npm run test:gateway-sim`).
 
 Uji Rules untuk UID belum dipasangkan, UID gateway yang tepat, UID mencoba membaca gateway lain, sensor/kumbung/farm mismatch, gateway `inactive`, serta akun owner/operator yang mencoba menulis telemetry.
 
@@ -279,7 +283,7 @@ Migrasi harus idempoten: dapat dijalankan ulang tanpa menggandakan anggota, kata
 
 **Selesai bila:** kontrak payload/config, model identitas, alur bootstrap auth, role farm, dan batas gateway satu farm disepakati serta didokumentasikan.
 
-### Fase 1 — Skema, domain service, dan rules (sedang berjalan)
+### Fase 1 — Skema, domain service, dan rules (selesai lokal, 2026-10-12)
 
 1. Tambahkan path builders tanpa mengubah reader lama.
 2. Definisikan validator payload/type/domain untuk farm member, gateway, sensor, gateway config, dan telemetry.
@@ -401,7 +405,7 @@ Pertanyaan berikut tidak mengubah keputusan domain, tetapi perlu dijawab saat Fa
 - `jamur/apps/web/src/pages/DevicesPage.jsx`: evolusi menjadi manajemen gateway/sensor.
 - `jamur/apps/web/src/pages/MonitoringPage.jsx`, `HomePage.jsx`, `HistoricalPage.jsx`, `AnalyticsPage.jsx`, `AlertsPage.jsx`, `AutomationPage.jsx`, dan halaman per-kumbung lainnya.
 - Auth/farm context serta navigation/layout untuk pemilih farm/kumbung.
-- Firebase Functions atau service provisioning tepercaya untuk undangan, pemetaan UID gateway, assignment multipath, dan audit.
+- `apps/web/src/lib/deviceManagementPlan.js` dan `deviceManagementService.js`: undangan operator, pemetaan UID gateway, dan assignment multipath langsung dari aplikasi owner (tanpa Functions). Audit trail assignment masih Fase 5.
 - Source firmware/bridge gateway untuk autentikasi, sync config, protokol sensor, telemetry, antrean offline, dan acknowledgement.
 - Simulasi konfigurasi dan alur firmware ESP32: [simulasi-gateway-esp32-firebase.md](./simulasi-gateway-esp32-firebase.md).
 

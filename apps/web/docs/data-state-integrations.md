@@ -13,7 +13,7 @@ Page → hook/page state → service (opsional) → Firebase SDK → Realtime Da
 
 - `src/firebase.js` menginisialisasi Firebase (`initializeApp`, `getAuth`, `getDatabase`). Tujuh nilai inti wajib; `measurementId` opsional. Jika konfigurasi inti kosong, modul melempar error saat dimuat.
 - Tidak ditemukan Axios, TanStack Query, Apollo, atau client REST terpusat. Firebase SDK digunakan langsung di service dan beberapa page.
-- `src/lib/firebasePaths.js` membangun path domain `tumbara/*`: farms, kumbungs, batch, telemetry, history, harvest, forecast.
+- `src/lib/firebasePaths.js` membangun path domain `tumbara/*`: farms, anggota, kumbungs, batch, gateway, sensor, config gateway, indeks relasi, telemetry, history, harvest, forecast, serta `userDirectory`. Modul aman diimpor dari Node (test) karena `import.meta.env` bersifat opsional.
 - `.env.example` mendokumentasikan `VITE_FIREBASE_*`, `VITE_CHAT_API_URL` (proxy chat opsional), `VITE_LEGACY_SENSOR_PATH`, dan default farm/kumbung/sensor. File `.env` lokal tidak dirinci di dokumen.
 - Vite mengekspos variabel `VITE_*` ke browser. Komentar template menyatakan rahasia provider harus berada di server, bukan `VITE_*`.
 
@@ -31,6 +31,15 @@ Page → hook/page state → service (opsional) → Firebase SDK → Realtime Da
 
 `useForecastData` dan `useDashboardForecast` menghubungkan page/card ke `forecastService.js`. Service membaca scope user, forecast terbaru/histori dan request; permintaan menulis request ke RTDB, bukan memanggil model langsung dari browser. Validasi/normalisasi ada di `forecast.js`.
 
+### Anggota farm dan perangkat
+
+`src/lib/deviceManagementService.js` menjalankan operasi owner langsung ke RTDB tanpa server: tambah/cabut operator, buat gateway, pairing/lepas UID gateway, cabut gateway, tugaskan/pindah/nonaktifkan sensor. Isi update dibangun oleh `src/lib/deviceManagementPlan.js` (modul murni, dipakai juga oleh test Rules). `database.rules.json` memvalidasi role owner dan konsistensi lintas path (katalog, indeks `kumbungSensors`/`gatewaySensors`, `gatewayConfigs`, kenaikan `configVersion` tepat +1).
+
+- Penambahan operator memakai `userDirectory/{email}` → UID. `App.jsx` memanggil `publishUserDirectoryEntry` setiap login; entri hanya bisa ditulis user sendiri dengan email terverifikasi (`email.toLowerCase()` dengan `.` diganti `,`).
+- Gateway ESP32 login dengan Firebase Anonymous Auth. Owner memasangkan UID ke gateway (`tumbara/gateways/{id}/authUid` + `tumbara/gatewayAuthUids/{uid}`); Rules mengenali gateway dari `auth.uid`, bukan custom claims.
+- Hanya gateway yang menulis `monitoring`/`history`; status sensor `active` hanya diberikan gateway.
+- Belum ada UI untuk operasi ini; `DevicesPage.jsx` masih memakai data statis.
+
 ## External Integrations
 
 - Firebase Authentication dan Realtime Database: session serta data utama.
@@ -42,4 +51,4 @@ Page → hook/page state → service (opsional) → Firebase SDK → Realtime Da
 
 ## Modul data/config penting
 
-`src/firebase.js` = inisialisasi; `src/lib/firebasePaths.js` = skema path; `src/lib/telemetry.js` = normalisasi/waktu; `src/lib/telemetryService.js` = subscription/history; `src/lib/operationsService.js` = CRUD; `src/lib/forecastService.js` = pembacaan/request forecast. Tidak ditemukan client API HTTP terpisah.
+`src/firebase.js` = inisialisasi; `src/lib/firebasePaths.js` = skema path; `src/lib/telemetry.js` = normalisasi/waktu; `src/lib/telemetryService.js` = subscription/history; `src/lib/operationsService.js` = CRUD; `src/lib/forecastService.js` = pembacaan/request forecast; `src/lib/deviceManagementPlan.js` = pembangun multipath update anggota/perangkat; `src/lib/deviceManagementService.js` = eksekusi operasi tersebut ke RTDB. Tidak ditemukan client API HTTP terpisah.

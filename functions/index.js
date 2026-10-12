@@ -264,5 +264,3 @@ exports.resetCooldownMidnight = functions.pubsub
     return null;
   });
 
-const deviceManagement = require('./device-management').createDeviceManagement(functions, admin);
-Object.assign(exports, deviceManagement);

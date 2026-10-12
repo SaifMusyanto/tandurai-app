@@ -2,7 +2,7 @@
 
 Dokumen ini menjelaskan rancangan prototipe gateway berbasis ESP32 yang login langsung ke Firebase Auth, membaca assignment sensor, dan mengirim telemetry langsung ke RTDB tanpa server provisioning terpisah. Semua ID, URL, interval, serta nilai sensor pada contoh adalah simulasi. Dokumen ini tidak mengubah firmware atau Firebase live.
 
-> **Keputusan autentikasi terbaru:** ESP32 membuat/memakai akun Firebase Anonymous Auth, lalu RTDB Rules mengenali perangkat melalui pemetaan UID→gateway yang disetujui owner. Rancangan credential perangkat/Cloud Functions pada progres Fase 1 belum disesuaikan di source; source dan Rules harus diubah sebelum deploy agar cocok dengan dokumen ini.
+> **Status:** ESP32 membuat/memakai akun Firebase Anonymous Auth, lalu RTDB Rules mengenali perangkat melalui pemetaan UID→gateway yang disetujui owner. Rules, service owner, dan simulator komputer (`tools/gateway-simulator.mjs`) sudah mengikuti dokumen ini dan lulus di Emulator (Fase 1). Firmware nyata belum dibuat.
 
 ## 1. Batas rancangan dan asumsi
 
@@ -13,7 +13,7 @@ Dokumen ini menjelaskan rancangan prototipe gateway berbasis ESP32 yang login la
 - ESP32 memerlukan koneksi internet ke Firebase Auth dan RTDB. Firebase tetap layanan cloud terkelola dan penggunaan Auth/RTDB mengikuti kuota/harga project; pendekatan ini menghindari server compute tambahan untuk login gateway.
 - Firebase Anonymous Auth harus diaktifkan pada project. Simpan refresh token/identitas lokal di NVS; setelah flash reset atau token hilang, gateway harus dipasangkan ulang.
 - Firmware membaca daftar sensor dari `tumbara/gatewayConfigs/{gatewayId}`. Protokol sensor fisik belum diketahui. Contoh `modbus-rtu:1` hanya ilustrasi.
-- Aturan RTDB saat ini di repository masih memakai claim custom gateway. Rules dan code provisioning Fase 1 belum cocok dengan pendekatan Anonymous Auth; perubahan migrasi dirinci di bagian autentikasi.
+- Rules di repository sudah memakai mapping UID dua arah (`gateways/{id}/authUid` dan `gatewayAuthUids/{uid}`); gateway berstatus `inactive` atau mapping tidak lengkap ditolak.
 
 ## 2. Arsitektur komponen firmware
 
@@ -133,7 +133,7 @@ Untuk boot selanjutnya, gunakan refresh token. Jangan panggil `accounts:signUp` 
 4. Sebelum mapping terpasang, ESP32 hanya dapat mendaftar/login; Rules belum mengizinkannya membaca config atau mengirim telemetry.
 5. Sesudah mapping aktif, gateway refresh/login ulang lalu mengakses hanya config dan sensor assignment miliknya.
 
-Belum ada UI pairing pada aplikasi saat ini. Untuk simulasi, mapping dapat dibuat oleh owner di Firebase Console setelah Rules khusus owner ditambahkan. Jangan membuka write umum pada node mapping hanya agar perangkat bisa memasangkan dirinya sendiri.
+Pairing tersedia sebagai `pairGateway` di `deviceManagementService` (UI menyusul di Fase 2). Rules hanya mengizinkan owner farm, gateway berstatus `pending` tanpa `authUid`, UID yang belum dipakai dan bukan akun manusia. Lepas pairing (`unpairGateway`) mengembalikan status `pending`; revoke (`disableGateway`) menghapus mapping dan menandai `inactive`. Jangan membuka write umum pada node mapping agar perangkat tidak bisa memasangkan dirinya sendiri.
 
 ### Langkah D — Refresh sesi
 
@@ -190,7 +190,7 @@ Jangan mengubah field `farmId`, `authUid`, atau `configVersion` dari firmware. M
 
 Untuk setiap entry `enabled=true`, panggil sensor adapter. Dalam simulator, adapter menghasilkan nilai tiruan. Pada perangkat nyata, adapter mengubahnya menjadi pembacaan bus. Setelah sensor berhasil dikenali, gateway dapat mengubah `tumbara/sensors/{sensorId}/status` menjadi `active` sesuai Rules saat ini.
 
-Rules saat ini hanya mengizinkan gateway mengubah status sensor menjadi `active`. Jika sensor kemudian tidak terbaca, gateway tidak dapat mengubah katalog menjadi `maintenance` atau `inactive`; tampilkan kondisi stale/error dari telemetry/heartbeat atau tambahkan endpoint trusted dan Rules khusus pada fase implementasi berikutnya.
+Rules hanya mengizinkan gateway mengubah status sensor dari `pending` menjadi `active` (tidak dari `inactive`). Jika sensor kemudian tidak terbaca, gateway tidak dapat mengubah katalog menjadi `maintenance` atau `inactive`; tampilkan kondisi stale/error dari telemetry/heartbeat atau tambahkan endpoint trusted dan Rules khusus pada fase implementasi berikutnya.
 
 ### Langkah 4 — Normalisasi dan upload latest
 
@@ -245,7 +245,7 @@ tumbara/history/FARM-01-K01/2026-10-09/SNS-0101_1791507600000
 
 `RECORD_ID` harus deterministik dan aman untuk path (misalnya gabungan `sensorId` dan timestamp), supaya retry menggunakan key yang sama. Latest boleh ditimpa data yang lebih baru; history append-only.
 
-**Batasan yang perlu ditutup:** Rules lokal saat ini mengizinkan gateway menulis history tetapi `.read` history hanya diberikan kepada user farm. Karena itu gateway tidak bisa mengecek apakah PUT history dengan key yang sama sebelumnya berhasil jika respons hilang. Sebelum mengandalkan retry offline produksi, tambahkan izin baca history yang dibatasi ke sensor/assignment gateway tersebut atau sediakan endpoint ingestion tepercaya yang memberi acknowledgement idempoten. Jangan menganggap HTTP permission denied selalu berarti record sudah pernah tersimpan.
+**Retry idempoten:** Rules mengizinkan gateway membaca satu record history pada kumbung farm-nya bila record belum ada atau milik gateway itu. Sebelum PUT ulang, GET path yang sama; bila sudah ada, lewati. Jangan menganggap HTTP 401 (permission denied pada RTDB REST) berarti record sudah tersimpan. Simulator menerapkan pola ini pada outbox-nya.
 
 ## 6. Simulasi satu siklus boot
 
@@ -282,8 +282,8 @@ Tambahkan variasi kecil dan timestamp nyata dari clock tersinkron. Tes beberapa 
 
 ## 8. Urutan prototyping sebelum hardware dibeli
 
-1. Buat skrip simulator di komputer yang mengimplementasikan Anonymous Auth REST, refresh token, UID pairing owner, read config, heartbeat, dan telemetry.
-2. Jalankan pada Firebase Emulator/staging dengan ID simulasi `GW-01`, lalu uji allow/deny Rules.
+1. ✅ Simulator komputer: `npm run simulate:gateway -- provision|run|status|reset --gateway GW-01` (Anonymous Auth REST, refresh token, menunggu pairing, read config, heartbeat, telemetry, outbox).
+2. ✅ Emulator: `npm run test:gateway-sim` dan `npm run test:rules`. Ulangi terhadap staging setelah Rules di-deploy ke sana.
 3. Buat versi ESP32 yang hanya menguji Wi-Fi + TLS + Auth + refresh token; belum perlu sensor.
 4. Tambahkan polling config dan acknowledgement versi.
 5. Tambahkan sensor adapter tiruan pada ESP32 untuk menguji loop end-to-end dan kestabilan memori/jaringan.

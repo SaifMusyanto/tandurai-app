@@ -55,6 +55,8 @@ Path relatif terhadap `apps/web`. Peran diringkas dari source.
 | Path → export | Peran |
 |---|---|
 | `src/lib/firebasePaths.js` → `FIREBASE_PATHS` | Builder path Firebase. |
+| `src/lib/deviceManagementPlan.js` → `build*Updates`, `emailDirectoryKey` | Pembangun multipath update anggota farm, gateway, pairing, dan sensor (murni, tanpa SDK). |
+| `src/lib/deviceManagementService.js` → `addFarmOperator`, `createGateway`, `pairGateway`, `assignSensor`, dll. | Operasi owner langsung ke RTDB; validasi oleh Rules. |
 | `src/lib/telemetry.js` → helpers/konstanta | Normalisasi, staleness, timestamp dan payload telemetry. |
 | `src/lib/forecast.js` → helpers/konstanta | Normalisasi dan validasi forecast. |
 | `src/lib/operations.js` → helpers/konstanta | Status domain dan pembentuk payload operasi. |

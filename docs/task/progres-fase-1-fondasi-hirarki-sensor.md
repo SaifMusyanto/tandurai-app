@@ -1,82 +1,92 @@
 # Progres Fase 1 — Fondasi Hirarki Sensor
 
-**Status terbaru:** Rancangan ESP32 tanpa server provisioning tambahan sudah dipilih dan dicatat, tetapi source Fase 1 belum dimigrasikan ke rancangan ini. Kode dan Rules saat ini masih memakai custom claims/Cloud Functions; jangan deploy sebagai solusi ESP32 langsung sebelum mismatch tersebut dibereskan.
+**Status:** **Selesai (lokal/emulator).** Rules, domain service, dan test sudah dimigrasikan ke rancangan tanpa server: ESP32 memakai Firebase Anonymous Auth, owner memasangkan UID ke gateway, dan seluruh operasi owner berjalan sebagai multipath update yang divalidasi RTDB Rules. Belum ada deploy atau write ke Firebase live.
 
-**Tanggal pembaruan:** 2026-10-09  
+**Tanggal pembaruan:** 2026-10-12  
 **Rencana utama:** [`implementasi-hirarki-manajemen-sensor.md`](./implementasi-hirarki-manajemen-sensor.md)  
 **Simulasi ESP32:** [`simulasi-gateway-esp32-firebase.md`](./simulasi-gateway-esp32-firebase.md)  
 **Audit awal:** [`progres-fase-0-audit-sistem-sensor.md`](./progres-fase-0-audit-sistem-sensor.md)
 
-## 1. Keputusan domain dan autentikasi terbaru
+## 1. Keputusan yang berlaku
 
-- Role hanya `owner` dan `operator`, berlaku pada tingkat farm.
-- Satu akun dapat terhubung ke lebih dari satu farm. Owner menambahkan karyawan sebagai operator farm.
-- Akun/data lama dianggap dummy. Fixture demo berisi owner bernama `Petani` dengan UID placeholder; akun itu belum dibuat di Firebase Auth dan belum di-seed ke Firebase live.
-- Gateway memiliki ID stabil yang dibuat dari software, terikat ke satu farm, dan dapat menangani sensor di beberapa kumbung dalam farm tersebut.
-- Hanya gateway yang menulis telemetry ke RTDB.
-- **ESP32 login langsung ke Firebase Anonymous Auth melalui HTTPS REST API.** Tidak memakai custom token, Admin SDK, service-account key, atau server khusus untuk menerbitkan token gateway.
-- Firebase Auth mengembalikan UID, ID token, dan refresh token. ESP32 mengirim ID token ke RTDB dan menyimpan refresh token secara lokal agar UID tetap sama setelah reboot.
-- Owner memasangkan UID Auth ESP32 dengan gateway ID. Registry yang direncanakan:
+- Role hanya `owner` dan `operator`, berlaku pada tingkat farm. Satu akun dapat menjadi anggota beberapa farm.
+- **Tanpa server:** tidak ada Cloud Functions, Admin SDK, custom token, atau service account untuk membership maupun perangkat. Klien owner menulis langsung ke RTDB; Rules adalah satu-satunya penjaga integritas.
+- Gateway terikat ke satu farm, dapat melayani sensor di beberapa kumbung farm tersebut, dan menjadi satu-satunya penulis telemetry.
+- ESP32 login dengan Anonymous Auth REST; UID dipetakan oleh owner:
 
   ```text
   tumbara/gateways/{gatewayId}/authUid = {uid}
-  tumbara/gatewayAuthUids/{uid} = {gatewayId}
+  tumbara/gatewayAuthUids/{uid}       = {gatewayId}
   ```
 
-- RTDB Rules mencari gateway dari `auth.uid` melalui registry tersebut, lalu memeriksa farm, status gateway, assignment sensor, dan kumbung. Rules tidak lagi mengandalkan custom claims `identity`, `gatewayId`, atau `farmId`.
-- Cara pairing UI belum dibuat. Sebelum UID dipasangkan owner, akun anonim ESP32 tidak boleh membaca config atau menulis telemetry.
-- Firebase Auth/RTDB masih layanan cloud dan tetap mengikuti kuota/harga project. Pilihan ini menghindari server compute terpisah khusus untuk provisioning/login gateway.
+  Rules menganggap UID sebagai gateway hanya bila **kedua arah** mapping cocok dan status gateway bukan `inactive`.
+- Owner menambahkan operator berdasarkan email terverifikasi lewat indeks `userDirectory/{emailKey} = { uid }`. Entri ditulis user sendiri saat login (`App.jsx` → `publishUserDirectoryEntry`), hanya bila `auth.token.email_verified === true`. `emailKey` = email huruf kecil dengan `.` diganti `,`.
+- Akun/data lama dianggap dummy; akun demo `Petani` belum dibuat di Firebase Auth live.
 
-## 2. Kondisi source saat ini
+## 2. Hasil implementasi
 
-### Sudah dibuat sebelumnya
+### Rules (`database.rules.json`)
 
-- Registry dan Rules awal untuk `gateways`, `sensors`, `farmMembers`, `kumbungSensors`, `gatewaySensors`, dan `gatewayConfigs`.
-- Rules awal mengganti role global dengan `users/{uid}/access/farmRoles/{farmId}` (`owner`/`operator`) serta membatasi akses data farm.
-- Rules awal mengunci latest/history write ke gateway, tetapi identifikasi gatewaynya memakai **custom claims**. Ini belum sesuai rancangan Anonymous Auth UID mapping.
-- `functions/device-management.js` menyediakan callable `createGateway`, `assignSensor`, `disableGateway`, `addFarmOperator`, dan `removeFarmOperator`.
-- `createGateway` saat ini membuat custom token dengan claims; bagian provisioning ini harus dihapus atau diganti. Jangan menerbitkan custom token dari backend untuk desain yang dipilih.
-- Web sudah punya path builder dan `deviceManagementService`, tetapi belum punya halaman UI manajemen perangkat/pairing.
-- Fixture test owner `Petani` memakai placeholder; tidak menyimpan password akun nyata.
+| Area | Aturan |
+|---|---|
+| `userDirectory/{emailKey}` | Baca per key oleh user login (tanpa listing). Tulis hanya user sendiri dengan email terverifikasi dan key sesuai email token. |
+| `users/{uid}/access/farms|farmRoles/{farmId}` | Owner farm dapat memberi/mencabut `operator` untuk user lain, hanya bersama entri `farmMembers` yang konsisten. Tidak dapat mengubah akses sendiri atau menurunkan owner. |
+| `farmMembers/{farmId}/{uid}` | Owner menulis `operator` aktif dengan `invitedBy = auth.uid`; email harus terdaftar di `userDirectory` untuk UID tersebut. Hapus harus bersama indeks akses. Entri owner tidak dapat diubah/dihapus. |
+| `gateways/{gatewayId}` | Owner farm membuat (status wajib `pending`) dan mengelola metadata; `farmId` tidak dapat dipindah. Gateway hanya dapat menulis `status='online'`, `lastSeenAt` (monoton), `firmwareVersion`, `appliedConfigVersion` (monoton, ≤ `configVersion`). |
+| `gatewayAuthUids/{uid}` | Pairing hanya oleh owner farm gateway, untuk gateway `pending` tanpa `authUid`, UID bukan akun manusia (`users/{uid}` tidak ada), dan UID belum dipakai. Lepas pairing harus menghapus `authUid` gateway. |
+| `gatewayConfigs/{gatewayId}` | Dibaca anggota farm dan gateway pemilik. `configVersion` hanya naik tepat +1 dan harus sama dengan `gateways/{id}/configVersion`; perubahan entri sensor wajib menaikkan versi. Entri sensor harus cocok dengan katalog (`gatewayId`, `kumbungId`, `enabled` = status ≠ `inactive`). |
+| `sensors/{sensorId}` | Owner farm menulis katalog; kumbung dan gateway harus satu farm, indeks dan config harus ikut diperbarui, tidak bisa pindah farm, owner tidak dapat memberi status `active`. Gateway pemilik hanya dapat mengubah status `pending → active` (tidak dari `inactive`). |
+| `kumbungSensors`, `gatewaySensors` | Ditulis owner, harus cocok dengan katalog sensor pada state baru. |
+| `monitoring`, `history` | Write hanya gateway terpasang untuk sensor `active` yang ditugaskan ke gateway itu, di kumbung dan farm yang sama, dengan `gatewayId` payload = gateway terautentikasi. History append-only. Gateway dapat membaca record history miliknya (atau mengetahui record belum ada) untuk retry idempoten. |
 
-### Belum dilakukan
+Rules baca legacy (`monitoring`, `history`, `monitoring/sensor1`, forecast, operasi) tidak diubah dan diverifikasi oleh test regresi.
 
-- Belum ada firmware atau source ESP32 di repository.
-- Anonymous Auth belum diaktifkan/diuji pada project Firebase live.
-- Belum ada Auth REST client ESP32, refresh token storage/NVS, pairing UID, atau sensor adapter.
-- Belum ada perubahan Rules untuk `gatewayAuthUids/{uid}`.
-- Belum ada perubahan sumber penulisan metadata gateway/config agar pairing dan assignment dapat dilakukan tanpa Cloud Function provisioning khusus. Tentukan mana yang dapat dilakukan langsung oleh aplikasi owner dengan multipath update + Rules.
-- Belum ada UI pairing owner, UI gateway/sensor, acknowledgement firmware, atau test end-to-end perangkat.
-- Tidak ada deploy atau write ke Firebase live.
+### Kode
 
-## 3. Verifikasi terakhir pada source lama
+- `apps/web/src/lib/deviceManagementPlan.js` (baru): pembangun multipath update murni — `buildDirectoryEntryUpdates`, `buildAddOperatorUpdates`, `buildRemoveOperatorUpdates`, `buildCreateGatewayUpdates`, `buildPairGatewayUpdates`, `buildUnpairGatewayUpdates`, `buildDisableGatewayUpdates`, `buildAssignSensorUpdates`, `buildDeactivateSensorUpdates`. Dipakai service web dan test, sehingga test menguji update yang sama dengan aplikasi.
+- `apps/web/src/lib/deviceManagementService.js`: memakai Firebase Database SDK langsung (bukan callable). Operasi: `publishUserDirectoryEntry`, `addFarmOperator`, `removeFarmOperator`, `createGateway`, `pairGateway`, `unpairGateway`, `disableGateway`, `assignSensor`, `deactivateSensor`. Versi config dibaca lalu dinaikkan; bila berubah di tengah jalan, Rules menolak (concurrency optimistik).
+- `apps/web/src/lib/firebasePaths.js`: builder `farmAccess`, `userDirectoryEntry`, `gatewayAuthUid`; aman diimpor dari Node.
+- `apps/web/src/App.jsx`: mendaftarkan entri direktori email setiap login.
+- `apps/web/src/firebase.js`: `getFunctions` dihapus. `functions/device-management.js` dan registrasinya di `functions/index.js` dihapus.
+- `tools/gateway-simulator.mjs` (baru): simulator ESP32 berbasis REST murni — provision Anonymous Auth, "NVS" UID/refresh token di `.gateway-sim/` (diabaikan Git, ditulis atomik), refresh ID token, menunggu pairing, polling + validasi config, ack `appliedConfigVersion` hanya bila seluruh sensor menjawab, heartbeat 60 detik, aktivasi sensor, telemetry latest + history dengan outbox idempoten, backoff+jitter, adapter sensor tiruan (`SIM_FAIL_SENSORS` untuk sensor tidak menjawab).
+- `tools/gateway-sim-e2e.mjs` (baru) dan `firebase.json` (emulator Auth port 9099).
+- `package.json`: `simulate:gateway`, `test:gateway-sim`. `tools/run-database-rules-tests.ps1` menerima `-Only` dan `-Command` (default tetap test Rules).
 
-- `npm run test:rules`: **17/17 lulus** pada Realtime Database Emulator sebelum perubahan rancangan Anonymous Auth. Test tersebut memvalidasi rancangan custom claims yang sekarang masih berada di source; test harus diperbarui saat Rules dimigrasikan.
-- `node --check functions/device-management.js`, `node --check functions/index.js`, dan `node --check tests/database-rules.test.mjs`: lulus pada pemeriksaan terakhir.
-- ESLint untuk `apps/web/src/firebase.js`, `firebasePaths.js`, dan `deviceManagementService.js`: lulus.
-- Emulator menampilkan peringatan kredensial Firebase CLI lokal kedaluwarsa tetapi tetap menjalankan suite dengan sukses. Tidak login ulang atau deploy.
-- Pemeriksaan di atas adalah baseline source lama; setelah implementasi UID mapping, ulangi test Rules dan unit/callable yang terkait.
+## 3. Verifikasi (2026-10-12)
 
-## 4. Rancangan ESP32 yang perlu diimplementasikan
+| Perintah | Hasil |
+|---|---|
+| `npm run test:rules` | **33/33 lulus** di RTDB Emulator |
+| `npm run test:gateway-sim` | **Lulus** — owner membuat gateway + 2 sensor di 2 kumbung, UID belum dipasangkan tanpa akses, pairing → config diterapkan/sensor aktif/telemetry/heartbeat, reboot dengan UID sama dan retry history idempoten, nonaktif sensor → config baru, sensor tidak terbaca, revoke → tidak ada write |
+| `npm run test:telemetry`, `npm run test:operations` | 5/5 dan 4/4 lulus |
+| ESLint file web yang diubah; `node --check` functions/tools | Lulus |
 
-1. Software membuat `gatewayId`, contoh `GW-01`, dengan status `pending`.
-2. ESP32 menjalankan Anonymous Auth `accounts:signUp` hanya saat provisioning pertama, menyimpan `localId`/UID dan `refreshToken` di storage perangkat, serta menyimpan ID token sementara di RAM.
-3. ESP32 menampilkan UID melalui serial/proses commissioning yang dibatasi. Owner memverifikasi perangkat fisik, lalu memasangkan UID tersebut ke `GW-01`.
-4. Software owner menulis mapping UID dua arah secara aman. Rules harus mencegah operator, gateway lain, atau user biasa mengubah mapping.
-5. Setelah dipasangkan, ESP32 membaca `gatewayConfigs/GW-01`, melaporkan heartbeat dan versi config, lalu membaca sensor lokal.
-6. ESP32 mengirim `telemetry-v1` ke latest/history memakai ID token. ID sensor, kumbung, farm, dan gateway harus berasal dari config/registry yang tervalidasi.
-7. Token 401 memicu refresh sekali; error jaringan memakai backoff. Refresh token hilang/revoke berarti pairing ulang dengan UID baru.
+Skenario allow/deny di test Rules: direktori email (email sendiri/terverifikasi saja, tanpa listing); tambah/cabut operator (UID–email tidak cocok, update parsial, owner farm lain, owner dicabut → ditolak); buat gateway (duplikat, lintas farm, operator → ditolak); UID anonim belum dipasangkan; pairing hanya owner, gateway pending, UID bukan manusia/belum dipakai; lepas dan pasang ulang; mapping menggantung; gateway membaca hanya config/katalog sendiri dan tidak bisa mengubah metadata; revoke dan `inactive`; owner/operator/non-member tidak dapat menulis telemetry; telemetry gateway/farm/kumbung/sensor salah dan out-of-range; history append-only, bucket konsisten, record gateway lain; sensor `pending`/`inactive`; penugasan dengan versi basi, lintas farm, tanpa indeks, tanpa bump versi, owner memaksa `active`; pindah gateway+kumbung; aktivasi oleh gateway; nonaktif sensor; akses baca legacy.
 
-Contoh payload, API Auth, bentuk config multi-sensor/multi-kumbung, dan batasan retry dijelaskan di dokumen simulasi ESP32 tertaut di atas. Protokol `modbus-rtu` pada contoh hanyalah placeholder; belum ada keputusan protokol hardware.
+Emulator menampilkan peringatan kredensial Firebase CLI lokal kedaluwarsa; tidak memengaruhi emulator. Tidak login ulang atau deploy.
 
-## 5. Langkah sesi berikutnya
+## 4. Batasan dan catatan untuk fase berikutnya
 
-1. **Migrasikan Rules gateway dari custom claims ke UID mapping.** Tambahkan path `gatewayAuthUids`, validasi gateway/farm, read config milik gateway sendiri, telemetry assignment, status inactive, dan aturan owner untuk pairing/unpair.
-2. **Hilangkan callable custom-token provisioning.** Review `createGateway` dan `deviceManagementService`; pilih operasi metadata yang dapat dilakukan dari aplikasi owner langsung ke RTDB dengan Rules + multipath update. Jangan menaruh Admin credential di ESP32.
-3. **Tambahkan test emulator baru** untuk UID anonim belum dipasangkan, gateway tepat, UID mencoba gateway lain, farm/kumbung mismatch, owner-only pairing, revoke, telemetry owner/operator ditolak, dan history retry/read scope.
-4. **Buat simulator komputer** untuk Anonymous Auth, token refresh, pairing UID manual, config polling, heartbeat, serta telemetry tiruan sebelum hardware dibeli.
-5. **Buat UI owner** untuk membuat ID gateway dan memasangkan UID perangkat; tampilkan status `pending/online/inactive` dan waktu heartbeat.
-6. Tambahkan pengelolaan sensor: pilih kumbung, isi sensor ID/alamat, assign ke gateway pada farm yang sama; status `active` menunggu laporan gateway.
-7. Setelah model ESP32/sensor/protokol dipilih, buat firmware Wi-Fi/TLS/Auth dahulu, lalu config manager, adapter sensor, outbox, dan recovery offline.
-8. Pertahankan dry-run migrasi data legacy. Jangan mengangkat akun lama sebagai owner; akun demo `Petani` tetap perlu dibuat terpisah jika diperlukan.
-9. Tidak ada deploy sebelum Rules yang baru lulus Emulator dan alur lama yang perlu dipertahankan sudah ditinjau.
+- **`tumbara/alerts` tidak memiliki rule** (sudah begitu sejak sebelum Fase 1, termasuk commit terakhir). `TopNavbar` dan `AlertsPage` membaca path ini sehingga ditolak oleh Rules. Perlu keputusan apakah alert global atau per farm sebelum menambahkan rule.
+- `tools/telemetry-simulator.mjs` login sebagai akun manusia sehingga ditolak Rules gateway-only; gunakan `tools/gateway-simulator.mjs`.
+- Worker/Functions berbasis Admin SDK (`functions/index.js`, `local-alert-worker.js`, `local_ai_worker`) tidak terpengaruh Rules, tetapi masih memakai sensor default/legacy `sensor1` (Fase 6).
+- Gateway belum dapat menandai sensor `maintenance`/error; status sensor tak terbaca terlihat dari telemetry stale. Kontrak acknowledgement per sensor dikerjakan di Fase 3.
+- Membuat farm baru dan menetapkan owner pertama belum ada alur di aplikasi; owner awal di-seed (akun demo `Petani` dibuat terpisah saat diperlukan).
+- `userDirectory` memungkinkan user login mengecek apakah email tertentu terdaftar (hanya mengembalikan UID). Ini konsekuensi pilihan tanpa server; pertimbangkan App Check sebelum produksi.
+- Belum ada UI manajemen anggota/gateway/sensor (Fase 2 dan Fase 5).
+
+## 5. Sebelum deploy Rules ke Firebase
+
+1. Aktifkan Anonymous Auth pada project Firebase.
+2. Review dengan ekspor RTDB terbaru: semua `gateways`/`sensors` lama harus memenuhi skema baru (tidak ada data katalog pada ekspor yang diaudit di Fase 0).
+3. Putuskan rule `tumbara/alerts` agar halaman alert tidak tetap tertolak.
+4. Pastikan tidak ada penulis telemetry manusia yang masih diperlukan.
+5. Deploy ke project demo/staging terlebih dahulu, jalankan simulator gateway terhadap staging, baru production.
+
+## 6. Langkah berikutnya (Fase 2)
+
+1. UI owner: buat gateway, tampilkan status `pending/online/offline/inactive`, heartbeat, firmware, `configVersion` vs `appliedConfigVersion`; form pairing UID, lepas pairing, dan revoke.
+2. Prosedur recovery perangkat (NVS hilang → lepas UID lama → provision → pairing ulang) di UI dan dokumen operasional.
+3. Definisi offline dari `lastSeenAt` (prototipe: heartbeat 60 detik).
+4. Uji simulator gateway terhadap project staging setelah Rules di-deploy ke sana.
+5. Setelah hardware dipilih: firmware Wi-Fi/TLS/Auth/refresh token terlebih dahulu, mengikuti perilaku `tools/gateway-simulator.mjs`.

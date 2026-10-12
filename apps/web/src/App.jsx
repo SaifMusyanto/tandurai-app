@@ -18,6 +18,7 @@ import AIForecastPage from './pages/AIForecastPage.jsx';
 import AuthPage from './pages/AuthPage.jsx';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './firebase';
+import { publishUserDirectoryEntry } from './lib/deviceManagementService';
 import { Leaf } from 'lucide-react';
 
 function App() {
@@ -26,6 +27,10 @@ function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser ?? null);
+      // Indeks email terverifikasi → UID agar owner dapat menambahkan user ini sebagai operator.
+      publishUserDirectoryEntry(currentUser).catch(error => {
+        console.warn('Gagal memperbarui direktori pengguna:', error);
+      });
     });
     return () => unsubscribe();
   }, []);

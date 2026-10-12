@@ -1,3 +1,8 @@
+param(
+  [string]$Only = 'database',
+  [string]$Command = 'node --test tests/database-rules.test.mjs'
+)
+
 $ErrorActionPreference = 'Stop'
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -26,7 +31,7 @@ if ($major -lt 21) {
 
 Push-Location $root
 try {
-  & firebase emulators:exec --only database --project demo 'node --test tests/database-rules.test.mjs'
+  & firebase emulators:exec --only $Only --project demo $Command
   exit $LASTEXITCODE
 }
 finally {

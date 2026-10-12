@@ -39,6 +39,6 @@ Payload history sama, ditambah `bucketStart`, yaitu timestamp yang dibulatkan tu
 
 ## Autentikasi perangkat
 
-Gunakan akun Firebase Authentication khusus perangkat dengan role `operator` dan hanya akses ke farm terkait. Jangan memakai akun petani permanen atau menaruh password di firmware yang di-commit. Untuk perangkat demo, simpan konfigurasi Wi-Fi/Auth dalam `secrets.h` yang diabaikan Git.
+Gateway login langsung dengan Firebase **Anonymous Auth** (REST `accounts:signUp`, lalu refresh token). Owner memasangkan UID perangkat ke ID gateway dari aplikasi; Rules mengenali gateway melalui `tumbara/gatewayAuthUids/{uid}` dan hanya mengizinkan write untuk sensor yang ditugaskan ke gateway tersebut. Akun manusia (owner/operator) tidak dapat menulis telemetry. Jangan menaruh password, service account, atau token di firmware yang di-commit. Rincian: [`task/simulasi-gateway-esp32-firebase.md`](task/simulasi-gateway-esp32-firebase.md).
 
-Sebelum firmware tersedia, `node tools/telemetry-simulator.mjs` mereplikasi alur pengiriman dan rules yang sama.
+Sebelum firmware tersedia, `npm run simulate:gateway -- <provision|run|status|reset> --gateway <ID>` meniru gateway melalui REST, dan `npm run test:gateway-sim` menguji alurnya di emulator. `tools/telemetry-simulator.mjs` lama login sebagai akun manusia sehingga ditolak oleh Rules gateway-only.

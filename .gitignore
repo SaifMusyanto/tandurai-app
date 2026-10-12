@@ -30,3 +30,6 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+
+# Gateway simulator "NVS" (UID + refresh token)
+.gateway-sim/
