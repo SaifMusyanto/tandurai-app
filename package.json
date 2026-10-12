@@ -16,7 +16,12 @@
     "test:stage4": "npm run test:telemetry && npm run test:operations && npm run test:rules",
     "test:worker": "local_ai_worker\\.venv\\Scripts\\python.exe -m pytest local_ai_worker\\tests -q",
     "worker:health": "local_ai_worker\\.venv\\Scripts\\python.exe -m worker health",
-    "worker:watch": "local_ai_worker\\.venv\\Scripts\\python.exe -m worker watch --interval 3"
+    "worker:watch": "local_ai_worker\\.venv\\Scripts\\python.exe -m worker watch --interval 3",
+    "alerts:local": "npm run alerts:local --prefix functions",
+    "alerts:once": "npm run alerts:once --prefix functions",
+    "alerts:test-telegram": "npm run alerts:test-telegram --prefix functions",
+    "alerts:validate": "npm run alerts:validate --prefix functions",
+    "alerts:bind-chat": "npm run alerts:bind-chat --prefix functions --"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",

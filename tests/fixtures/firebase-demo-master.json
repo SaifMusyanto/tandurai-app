@@ -20,7 +20,7 @@
       "name": "Kumbung Demo 01",
       "capacityBaglog": 1200,
       "status": "active",
-      "createdBy": "REPLACE_WITH_DEMO_UID",
+      "createdBy": "REPLACE_WITH_PETANI_UID",
       "createdAt": 1784077200000,
       "updatedAt": 1784077200000
     }
@@ -41,7 +41,7 @@
       "growthStage": "fruiting",
       "contaminationPct": 0,
       "status": "active",
-      "createdBy": "REPLACE_WITH_DEMO_UID",
+      "createdBy": "REPLACE_WITH_PETANI_UID",
       "createdAt": 1781485200000,
       "updatedAt": 1784077200000,
       "schemaVersion": "baglog-batch-v1"

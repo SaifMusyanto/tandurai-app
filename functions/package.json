@@ -6,7 +6,13 @@
     "shell": "firebase functions:shell",
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "alerts:local": "node local-alert-worker.js",
+    "alerts:once": "node local-alert-worker.js --once",
+    "alerts:test-telegram": "node local-alert-worker.js --test-telegram",
+    "alerts:bind-chat": "node local-alert-worker.js --bind-telegram-chat",
+    "alerts:validate": "node local-alert-worker.js --validate-config",
+    "test:alerts": "node --test test/alert-core.test.js"
   },
   "engines": {
     "node": "24"

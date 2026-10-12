@@ -1,15 +1,17 @@
 {
   "users": {
-    "REPLACE_WITH_DEMO_UID": {
+    "REPLACE_WITH_PETANI_UID": {
       "profile": {
-        "username": "Demo Manager",
-        "email": "demo@example.com",
+        "username": "Petani",
+        "email": "petani@example.test",
         "createdAt": 1784077200000
       },
       "access": {
-        "role": "manager",
         "farms": {
           "FARM-01": true
+        },
+        "farmRoles": {
+          "FARM-01": "owner"
         }
       }
     }
@@ -36,7 +38,7 @@
         "name": "Kumbung Demo 01",
         "capacityBaglog": 1200,
         "status": "active",
-        "createdBy": "REPLACE_WITH_DEMO_UID",
+        "createdBy": "REPLACE_WITH_PETANI_UID",
         "createdAt": 1784077200000,
         "updatedAt": 1784077200000
       }
@@ -57,10 +59,21 @@
         "growthStage": "fruiting",
         "contaminationPct": 0,
         "status": "active",
-        "createdBy": "REPLACE_WITH_DEMO_UID",
+        "createdBy": "REPLACE_WITH_PETANI_UID",
         "createdAt": 1781485200000,
         "updatedAt": 1784077200000,
         "schemaVersion": "baglog-batch-v1"
+      }
+    },
+    "farmMembers": {
+      "FARM-01": {
+        "REPLACE_WITH_PETANI_UID": {
+          "createdAt": 1784077200000,
+          "updatedAt": 1784077200000,
+          "role": "owner",
+          "status": "active",
+          "invitedBy": "REPLACE_WITH_PETANI_UID"
+        }
       }
     }
   }

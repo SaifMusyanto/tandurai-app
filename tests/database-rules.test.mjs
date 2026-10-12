@@ -8,11 +8,11 @@ const projectId = 'tandurai-ai';
 let testEnv;
 
 const farm = id => ({ name: `Farm ${id}`, timezone: 'Asia/Jakarta', location: 'Indonesia', status: 'active', createdAt: 1, updatedAt: 1 });
-const kumbung = (farmId, name, creator = 'managerA') => ({ farmId, name, capacityBaglog: 1000, status: 'active', createdBy: creator, createdAt: 1, updatedAt: 1 });
+const kumbung = (farmId, name, creator = 'petaniOwner') => ({ farmId, name, capacityBaglog: 1000, status: 'active', createdBy: creator, createdAt: 1, updatedAt: 1 });
 const batch = (overrides = {}) => ({
   farmId: 'FARM-01', kumbungId: 'FARM-01-K01', startedAt: Date.now() - 86400000,
   baglogCountInitial: 1000, baglogCountActive: 980, substrateType: 'serbuk-kayu',
-  growthStage: 'fruiting', contaminationPct: 2, status: 'active', createdBy: 'managerA',
+  growthStage: 'fruiting', contaminationPct: 2, status: 'active', createdBy: 'petaniOwner',
   createdAt: 1, updatedAt: 1, schemaVersion: 'baglog-batch-v1', ...overrides,
 });
 const telemetry = (overrides = {}) => ({
@@ -20,6 +20,7 @@ const telemetry = (overrides = {}) => ({
   farmId: 'FARM-01',
   kumbungId: 'FARM-01-K01',
   sensorId: 'SNS-0101',
+  gatewayId: 'GW-01',
   schemaVersion: 'telemetry-v1',
   temperature: 27.5,
   humidity: 82,
@@ -41,17 +42,17 @@ before(async () => {
     const db = context.database();
     await set(ref(db), {
       users: {
-        managerA: {
-          profile: { username: 'Manager A', email: 'manager@example.com', createdAt: 1 },
-          access: { role: 'manager', farms: { 'FARM-01': true } },
+        petaniOwner: {
+          profile: { username: 'Petani', email: 'petani@example.test', createdAt: 1 },
+          access: { farms: { 'FARM-01': true }, farmRoles: { 'FARM-01': 'owner' } },
         },
         operatorA: {
           profile: { username: 'Operator A', email: 'operator@example.com', createdAt: 1 },
-          access: { role: 'operator', farms: { 'FARM-01': true } },
+          access: { farms: { 'FARM-01': true }, farmRoles: { 'FARM-01': 'operator' } },
         },
-        viewerA: {
-          profile: { username: 'Viewer A', email: 'viewer@example.com', createdAt: 1 },
-          access: { role: 'viewer', farms: { 'FARM-01': true } },
+        outsiderA: {
+          profile: { username: 'Non-member', email: 'outsider@example.com', createdAt: 1 },
+          access: {},
         },
       },
       tumbara: {
@@ -73,6 +74,9 @@ before(async () => {
         kumbungBatches: {
           'FARM-01-K01': { 'FARM-01-K01-B01': true },
         },
+        gateways: { 'GW-01': { id: 'GW-01', farmId: 'FARM-01', status: 'online', configVersion: 1 } },
+        sensors: { 'SNS-0101': { id: 'SNS-0101', farmId: 'FARM-01', kumbungId: 'FARM-01-K01', gatewayId: 'GW-01', status: 'active' } },
+        gatewayConfigs: { 'GW-01': { farmId: 'FARM-01', configVersion: 1, sensors: { 'SNS-0101': { kumbungId: 'FARM-01-K01', enabled: true } } } },
         aiForecasts: {
           'FARM-01-K01': { latest: { status: 'ok', forecastKg: 10 } },
           'FARM-02-K01': { latest: { status: 'ok', forecastKg: 20 } },
@@ -91,30 +95,40 @@ test('anonymous user cannot read demo farm', async () => {
   await assertFails(get(ref(db, 'tumbara/farms/FARM-01')));
 });
 
-test('manager can read assigned farm but not another farm', async () => {
-  const db = testEnv.authenticatedContext('managerA', { email: 'manager@example.com' }).database();
+test('owner can read assigned farm but not another farm', async () => {
+  const db = testEnv.authenticatedContext('petaniOwner', { email: 'petani@example.test' }).database();
   await assertSucceeds(get(ref(db, 'tumbara/farms/FARM-01')));
   await assertFails(get(ref(db, 'tumbara/farms/FARM-02')));
 });
 
 test('assigned user can read own forecast but not cross-farm forecast', async () => {
-  const db = testEnv.authenticatedContext('viewerA', { email: 'viewer@example.com' }).database();
+  const db = testEnv.authenticatedContext('operatorA', { email: 'operator@example.com' }).database();
   await assertSucceeds(get(ref(db, 'tumbara/aiForecasts/FARM-01-K01/latest')));
   await assertFails(get(ref(db, 'tumbara/aiForecasts/FARM-02-K01/latest')));
 });
 
-test('operator can write telemetry for assigned farm', async () => {
-  const db = testEnv.authenticatedContext('operatorA', { email: 'operator@example.com' }).database();
-  await assertSucceeds(set(ref(db, 'tumbara/monitoring/FARM-01-K01/SNS-0101'), telemetry()));
+test('owner and operator cannot write telemetry directly', async () => {
+  const owner = testEnv.authenticatedContext('petaniOwner', { email: 'petani@example.test' }).database();
+  const operator = testEnv.authenticatedContext('operatorA', { email: 'operator@example.com' }).database();
+  const path = 'tumbara/monitoring/FARM-01-K01/SNS-0101';
+  await assertFails(set(ref(owner, path), telemetry()));
+  await assertFails(set(ref(operator, path), telemetry()));
 });
 
-test('viewer cannot write telemetry', async () => {
-  const db = testEnv.authenticatedContext('viewerA', { email: 'viewer@example.com' }).database();
+test('gateway terdaftar dapat menulis telemetry untuk sensor assignment-nya', async () => {
+  const gateway = testEnv.authenticatedContext('gateway_GW-01', { identity: 'gateway', gatewayId: 'GW-01', farmId: 'FARM-01' }).database();
+  await assertSucceeds(set(ref(gateway, 'tumbara/monitoring/FARM-01-K01/SNS-0101'), telemetry()));
+  await assertSucceeds(get(ref(gateway, 'tumbara/gatewayConfigs/GW-01')));
+  await assertFails(get(ref(gateway, 'tumbara/gatewayConfigs/GW-OTHER')));
+});
+
+test('non-member cannot write telemetry', async () => {
+  const db = testEnv.authenticatedContext('outsiderA', { email: 'outsider@example.com' }).database();
   await assertFails(set(ref(db, 'tumbara/monitoring/FARM-01-K01/SNS-0101'), telemetry()));
 });
 
-test('client cannot write AI forecast even when manager', async () => {
-  const db = testEnv.authenticatedContext('managerA', { email: 'manager@example.com' }).database();
+test('client cannot write AI forecast even when owner', async () => {
+  const db = testEnv.authenticatedContext('petaniOwner', { email: 'petani@example.test' }).database();
   await assertFails(set(ref(db, 'tumbara/aiForecasts/FARM-01-K01/latest'), {
     status: 'ok',
     forecastKg: 999,
@@ -122,9 +136,9 @@ test('client cannot write AI forecast even when manager', async () => {
 });
 
 test('user cannot promote own role or farm access', async () => {
-  const db = testEnv.authenticatedContext('viewerA', { email: 'viewer@example.com' }).database();
-  await assertFails(set(ref(db, 'users/viewerA/access/role'), 'admin'));
-  await assertFails(set(ref(db, 'users/viewerA/access/farms/FARM-02'), true));
+  const db = testEnv.authenticatedContext('operatorA', { email: 'operator@example.com' }).database();
+  await assertFails(set(ref(db, 'users/operatorA/access/farmRoles/FARM-01'), 'owner'));
+  await assertFails(set(ref(db, 'users/operatorA/access/farms/FARM-02'), true));
 });
 
 test('new user can create a valid own profile only', async () => {
@@ -144,13 +158,14 @@ test('new user can create a valid own profile only', async () => {
 });
 
 test('history and harvest events are append-only', async () => {
-  const db = testEnv.authenticatedContext('operatorA', { email: 'operator@example.com' }).database();
+  const db = testEnv.authenticatedContext('gateway_GW-01', { identity: 'gateway', gatewayId: 'GW-01', farmId: 'FARM-01' }).database();
+  const operator = testEnv.authenticatedContext('operatorA', { email: 'operator@example.com' }).database();
   const historyRef = ref(db, 'tumbara/history/FARM-01-K01/2026-07-15/event-1');
   const timestamp = Math.floor(Date.now() / 600000) * 600000;
   await assertSucceeds(set(historyRef, telemetry({ timestamp, bucketStart: timestamp })));
   await assertFails(set(historyRef, telemetry({ timestamp, bucketStart: timestamp, temperature: 29 })));
 
-  const harvestRef = ref(db, 'tumbara/harvestEvents/FARM-01-K01/harvest-1');
+  const harvestRef = ref(operator, 'tumbara/harvestEvents/FARM-01-K01/harvest-1');
   await assertSucceeds(set(harvestRef, {
     farmId: 'FARM-01',
     kumbungId: 'FARM-01-K01',
@@ -192,25 +207,25 @@ test('history and harvest events are append-only', async () => {
     correctionReason: 'Salah membaca timbangan',
   };
   await assertSucceeds(set(
-    ref(db, 'tumbara/harvestEvents/FARM-01-K01/harvest-correction-1'),
+    ref(operator, 'tumbara/harvestEvents/FARM-01-K01/harvest-correction-1'),
     correction,
   ));
   await assertFails(set(
-    ref(db, 'tumbara/harvestEvents/FARM-01-K01/harvest-correction-invalid'),
+    ref(operator, 'tumbara/harvestEvents/FARM-01-K01/harvest-correction-invalid'),
     { ...correction, correctsEventId: 'tidak-ada' },
   ));
 });
 
-test('manager dapat membuat kumbung dan batch terhubung, operator tidak', async () => {
-  const manager = testEnv.authenticatedContext('managerA', { email: 'manager@example.com' }).database();
+test('owner dapat membuat kumbung; operator hanya membuat batch', async () => {
+  const owner = testEnv.authenticatedContext('petaniOwner', { email: 'petani@example.test' }).database();
   const operator = testEnv.authenticatedContext('operatorA', { email: 'operator@example.com' }).database();
   const newKumbung = kumbung('FARM-01', 'Kumbung Baru');
-  await assertSucceeds(update(ref(manager), {
+  await assertSucceeds(update(ref(owner), {
     'tumbara/kumbungs/FARM-01-K02': newKumbung,
     'tumbara/farmKumbungs/FARM-01/FARM-01-K02': true,
   }));
   await assertFails(set(ref(operator, 'tumbara/kumbungs/FARM-01-K03'), kumbung('FARM-01', 'Terlarang', 'operatorA')));
-  await assertSucceeds(update(ref(manager), {
+  await assertSucceeds(update(ref(owner), {
     'tumbara/baglogBatches/FARM-01-K02-B01': batch({ kumbungId: 'FARM-01-K02' }),
     'tumbara/kumbungBatches/FARM-01-K02/FARM-01-K02-B01': true,
   }));
@@ -227,13 +242,13 @@ test('panen menolak batch lintas kumbung dan berat nol', async () => {
 });
 
 test('telemetry menolak identitas path salah dan nilai out-of-range', async () => {
-  const db = testEnv.authenticatedContext('operatorA', { email: 'operator@example.com' }).database();
+  const db = testEnv.authenticatedContext('gateway_GW-01', { identity: 'gateway', gatewayId: 'GW-01', farmId: 'FARM-01' }).database();
   await assertFails(set(ref(db, 'tumbara/monitoring/FARM-01-K01/SNS-0101'), telemetry({ kumbungId: 'FARM-02-K01' })));
   await assertFails(set(ref(db, 'tumbara/monitoring/FARM-01-K01/SNS-0101'), telemetry({ humidity: 120 })));
 });
 
 test('histori dengan bucket tidak konsisten ditolak', async () => {
-  const db = testEnv.authenticatedContext('operatorA', { email: 'operator@example.com' }).database();
+  const db = testEnv.authenticatedContext('gateway_GW-01', { identity: 'gateway', gatewayId: 'GW-01', farmId: 'FARM-01' }).database();
   const timestamp = Math.floor(Date.now() / 600000) * 600000;
   await assertFails(set(
     ref(db, 'tumbara/history/FARM-01-K01/2026-07-15/bad-bucket'),
@@ -245,9 +260,9 @@ test('rules test suite completed all expected assertions', () => {
   assert.ok(testEnv);
 });
 
-test('operator dapat meminta perhitungan forecast, viewer ditolak', async () => {
+test('operator dapat meminta perhitungan forecast, non-member ditolak', async () => {
   const operator = testEnv.authenticatedContext('operatorA', { email: 'operator@example.com' }).database();
-  const viewer = testEnv.authenticatedContext('viewerA', { email: 'viewer@example.com' }).database();
+  const outsider = testEnv.authenticatedContext('outsiderA', { email: 'outsider@example.com' }).database();
   const request = {
     requestedAt: Date.now(),
     requestedBy: 'operatorA',
@@ -258,13 +273,26 @@ test('operator dapat meminta perhitungan forecast, viewer ditolak', async () => 
     schemaVersion: 'ai-request-v1',
   };
   await assertSucceeds(set(ref(operator, 'tumbara/aiRequests/FARM-01-K01'), request));
-  await assertSucceeds(get(ref(viewer, 'tumbara/aiRequests/FARM-01-K01')));
+  await assertFails(get(ref(outsider, 'tumbara/aiRequests/FARM-01-K01')));
   await assertFails(set(ref(operator, 'tumbara/aiRequests/FARM-01-K01'), {
     ...request,
     batchId: 'FARM-02-K01-B01',
   }));
-  await assertFails(set(ref(viewer, 'tumbara/aiRequests/FARM-01-K01'), {
+  await assertFails(set(ref(outsider, 'tumbara/aiRequests/FARM-01-K01'), {
     ...request,
-    requestedBy: 'viewerA',
+    requestedBy: 'outsiderA',
   }));
+});
+test('gateway hanya dapat mengaktifkan sensor assignment dan tidak dapat menghidupkan gateway yang dicabut', async () => {
+  const gateway = testEnv.authenticatedContext('gateway_GW-01', { identity: 'gateway', gatewayId: 'GW-01', farmId: 'FARM-01' }).database();
+  await assertSucceeds(set(ref(gateway, 'tumbara/sensors/SNS-0101/status'), 'active'));
+  await assertFails(set(ref(gateway, 'tumbara/sensors/SNS-0101/status'), 'inactive'));
+  await assertSucceeds(set(ref(gateway, 'tumbara/gateways/GW-01/status'), 'online'));
+
+  await testEnv.withSecurityRulesDisabled(async context => {
+    await set(ref(context.database(), 'tumbara/gateways/GW-01/status'), 'inactive');
+  });
+  await assertFails(get(ref(gateway, 'tumbara/gatewayConfigs/GW-01')));
+  await assertFails(set(ref(gateway, 'tumbara/monitoring/FARM-01-K01/SNS-0101'), telemetry()));
+  await assertFails(set(ref(gateway, 'tumbara/gateways/GW-01/status'), 'online'));
 });

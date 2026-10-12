@@ -263,3 +263,6 @@ exports.resetCooldownMidnight = functions.pubsub
     await admin.database().ref(COOLDOWN_REF).remove();
     return null;
   });
+
+const deviceManagement = require('./device-management').createDeviceManagement(functions, admin);
+Object.assign(exports, deviceManagement);
