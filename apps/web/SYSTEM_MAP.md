@@ -24,8 +24,9 @@ Indeks navigasi arsitektur aplikasi. Pemetaan bersumber dari source code `apps/w
 Browser → main.jsx → App.jsx [Firebase Auth gate]
   → AuthPage (anonim) | BrowserRouter → DashboardLayout → Page
   → Hook/state lokal → lib service/Firebase SDK → Firebase Realtime Database
+  → DashboardLayout → FarmProvider (konteks farm/kumbung/sensor) + ContextBar → halaman memakai `target`
   → Device management → deviceManagementService → multipath update (deviceManagementPlan) → Rules → registry/config gateway di RTDB
   Gateway ESP32 → Anonymous Auth REST → RTDB REST (UID dipetakan ke gateway oleh owner)
 ```
 
-Flow inti: telemetry (`/monitoring`, `/historical`, `/analytics`) → `telemetryService` → RTDB; operasi (`/operations`) → `operationsService` → RTDB; forecast (`/ai-forecast`) → hook → `forecastService` → RTDB; Home → telemetry + Open-Meteo + endpoint chat opsional.
+Flow inti: telemetry (`/monitoring`, `/historical`, `/analytics`, Home, navbar, Automation) → `FarmContext.target` → `telemetryService`/`useSensorHistory` → RTDB; anggota (`/farm-members`) dan perangkat (`/devices`) → `deviceManagementService` → RTDB; operasi (`/operations`) → `operationsService` → RTDB; forecast (`/ai-forecast`) → hook → `forecastService` → RTDB; Home → telemetry + Open-Meteo + endpoint chat opsional.

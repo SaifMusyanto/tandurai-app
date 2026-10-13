@@ -27,6 +27,9 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { assignSensor, deactivateSensor, subscribeFarmSensors } from '@/lib/deviceManagementService';
+import { sensorHealth } from '@/lib/deviceManagementPlan';
+import { subscribeKumbungTelemetry } from '@/lib/telemetryService';
+import { db } from '../firebase';
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,96}$/;
 
@@ -36,6 +39,33 @@ const STATUS_CONFIG = {
   maintenance: { label: 'Perawatan', className: 'bg-blue-500/10 text-blue-600 border-blue-500/20' },
   inactive: { label: 'Nonaktif', className: 'bg-muted text-muted-foreground border-border' },
 };
+
+const HEALTH_CONFIG = {
+  ok: { label: 'Terbaca', className: 'text-green-600' },
+  stale: { label: 'Tidak terbaca sejak', className: 'text-yellow-600' },
+  not_found: { label: 'Tidak ditemukan', className: 'text-red-600' },
+  read_error: { label: 'Gagal dibaca', className: 'text-red-600' },
+  unknown: { label: 'Menunggu laporan gateway', className: 'text-muted-foreground' },
+  inactive: { label: '—', className: 'text-muted-foreground' },
+};
+
+const timeAgo = (timestamp, now) => {
+  const seconds = Math.max(0, Math.floor((now - timestamp) / 1000));
+  if (seconds < 60) return `${seconds} detik lalu`;
+  const minutes = Math.floor(seconds / 60);
+  return minutes < 60 ? `${minutes} menit lalu` : `${Math.floor(minutes / 60)} jam lalu`;
+};
+
+function SensorHealth({ health, now }) {
+  const config = HEALTH_CONFIG[health.state] || HEALTH_CONFIG.unknown;
+  return (
+    <div className={`text-xs ${config.className}`} title={health.error || undefined}>
+      <span className="font-medium">{config.label}</span>
+      {health.lastReadAt && health.state !== 'inactive' && <span> {timeAgo(health.lastReadAt, now)}</span>}
+      {health.error && <p className="text-muted-foreground">{health.error}</p>}
+    </div>
+  );
+}
 
 const emptyForm = { sensorId: '', name: '', kumbungId: '', gatewayId: '', hardwareAddress: '' };
 
@@ -178,6 +208,89 @@ function DeactivateDialog({ sensor, onClose }) {
   );
 }
 
+/* ─── Tabel sensor satu kumbung + pembacaan terakhir ─────────────────── */
+function LatestReading({ telemetry, now }) {
+  if (!telemetry) return <span className="text-xs text-muted-foreground">Belum ada data</span>;
+  return (
+    <div className="text-xs">
+      <p className="font-medium whitespace-nowrap">
+        {telemetry.temperature ?? '—'}°C · {telemetry.humidity ?? '—'}% · {telemetry.co2 ?? '—'} ppm
+      </p>
+      <p className={telemetry.quality?.stale ? 'text-orange-600' : 'text-muted-foreground'}>
+        {timeAgo(telemetry.timestamp, now)}{telemetry.quality?.stale ? ' (usang)' : ''}
+        {telemetry.quality?.status && telemetry.quality.status !== 'valid' && !telemetry.quality.stale ? ` · ${telemetry.quality.status}` : ''}
+      </p>
+    </div>
+  );
+}
+
+function KumbungSensorTable({ kumbung, sensors, gatewaysById, isOwner, now, onEdit, onDeactivate }) {
+  const [latest, setLatest] = useState({});
+  const sensorKey = sensors.map(sensor => sensor.id).join(',');
+
+  useEffect(() => {
+    if (!sensorKey) return undefined;
+    return subscribeKumbungTelemetry(db, kumbung.id, sensorKey.split(','), setLatest, error => console.error('Gagal memuat telemetry sensor:', error));
+  }, [kumbung.id, sensorKey]);
+
+  return (
+    <div>
+      <p className="text-sm font-semibold mb-2">
+        {kumbung.name || kumbung.id} <span className="text-xs font-normal text-muted-foreground font-mono">{kumbung.id}</span>
+      </p>
+      {!sensors.length ? (
+        <p className="text-sm text-muted-foreground">Belum ada sensor.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-muted-foreground border-b">
+                <th className="py-2 pr-3 font-medium">Sensor</th>
+                <th className="py-2 pr-3 font-medium">Gateway</th>
+                <th className="py-2 pr-3 font-medium">Alamat</th>
+                <th className="py-2 pr-3 font-medium">Status</th>
+                <th className="py-2 pr-3 font-medium">Pembacaan</th>
+                <th className="py-2 pr-3 font-medium">Data terakhir</th>
+                {isOwner && <th className="py-2 font-medium text-right">Aksi</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {sensors.map(sensor => {
+                const status = STATUS_CONFIG[sensor.status] || STATUS_CONFIG.pending;
+                return (
+                  <tr key={sensor.id} className="border-b last:border-0">
+                    <td className="py-2 pr-3">
+                      <p className="font-medium">{sensor.name}</p>
+                      <p className="text-xs text-muted-foreground font-mono">{sensor.id}</p>
+                    </td>
+                    <td className="py-2 pr-3">{gatewaysById[sensor.gatewayId]?.name || sensor.gatewayId}</td>
+                    <td className="py-2 pr-3 font-mono text-xs">{sensor.hardwareAddress || '—'}</td>
+                    <td className="py-2 pr-3"><Badge variant="outline" className={status.className}>{status.label}</Badge></td>
+                    <td className="py-2 pr-3"><SensorHealth health={sensorHealth(sensor, gatewaysById[sensor.gatewayId]?.ack, now)} now={now} /></td>
+                    <td className="py-2 pr-3"><LatestReading telemetry={latest[sensor.id]} now={now} /></td>
+                    {isOwner && (
+                      <td className="py-2 text-right whitespace-nowrap">
+                        <Button size="sm" variant="ghost" onClick={() => onEdit(sensor)} aria-label={`Ubah ${sensor.id}`}>
+                          <Pencil size={14} />
+                        </Button>
+                        {sensor.status !== 'inactive' && (
+                          <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-600" onClick={() => onDeactivate(sensor)} aria-label={`Nonaktifkan ${sensor.id}`}>
+                            <Ban size={14} />
+                          </Button>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── Panel sensor per kumbung ───────────────────────────────────────── */
 export default function FarmSensorsPanel({ farm, isOwner, gateways }) {
   const [data, setData] = useState({ kumbungs: [], sensors: [] });
@@ -185,6 +298,12 @@ export default function FarmSensorsPanel({ farm, isOwner, gateways }) {
   const [error, setError] = useState('');
   const [dialog, setDialog] = useState(null); // { sensor: object|null }
   const [deactivateTarget, setDeactivateTarget] = useState(null);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -198,8 +317,8 @@ export default function FarmSensorsPanel({ farm, isOwner, gateways }) {
     });
   }, [farm.id]);
 
-  const gatewayNames = useMemo(
-    () => Object.fromEntries(gateways.map(gateway => [gateway.id, gateway.name || gateway.id])),
+  const gatewaysById = useMemo(
+    () => Object.fromEntries(gateways.map(gateway => [gateway.id, gateway])),
     [gateways],
   );
   const sensorsByKumbung = useMemo(() => data.kumbungs.map(kumbung => ({
@@ -229,56 +348,16 @@ export default function FarmSensorsPanel({ farm, isOwner, gateways }) {
         ) : (
           <div className="space-y-5">
             {sensorsByKumbung.map(({ kumbung, sensors }) => (
-              <div key={kumbung.id}>
-                <p className="text-sm font-semibold mb-2">
-                  {kumbung.name || kumbung.id} <span className="text-xs font-normal text-muted-foreground font-mono">{kumbung.id}</span>
-                </p>
-                {!sensors.length ? (
-                  <p className="text-sm text-muted-foreground">Belum ada sensor.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-left text-xs text-muted-foreground border-b">
-                          <th className="py-2 pr-3 font-medium">Sensor</th>
-                          <th className="py-2 pr-3 font-medium">Gateway</th>
-                          <th className="py-2 pr-3 font-medium">Alamat</th>
-                          <th className="py-2 pr-3 font-medium">Status</th>
-                          {isOwner && <th className="py-2 font-medium text-right">Aksi</th>}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sensors.map(sensor => {
-                          const status = STATUS_CONFIG[sensor.status] || STATUS_CONFIG.pending;
-                          return (
-                            <tr key={sensor.id} className="border-b last:border-0">
-                              <td className="py-2 pr-3">
-                                <p className="font-medium">{sensor.name}</p>
-                                <p className="text-xs text-muted-foreground font-mono">{sensor.id}</p>
-                              </td>
-                              <td className="py-2 pr-3">{gatewayNames[sensor.gatewayId] || sensor.gatewayId}</td>
-                              <td className="py-2 pr-3 font-mono text-xs">{sensor.hardwareAddress || '—'}</td>
-                              <td className="py-2 pr-3"><Badge variant="outline" className={status.className}>{status.label}</Badge></td>
-                              {isOwner && (
-                                <td className="py-2 text-right whitespace-nowrap">
-                                  <Button size="sm" variant="ghost" onClick={() => setDialog({ sensor })} aria-label={`Ubah ${sensor.id}`}>
-                                    <Pencil size={14} />
-                                  </Button>
-                                  {sensor.status !== 'inactive' && (
-                                    <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-600" onClick={() => setDeactivateTarget(sensor)} aria-label={`Nonaktifkan ${sensor.id}`}>
-                                      <Ban size={14} />
-                                    </Button>
-                                  )}
-                                </td>
-                              )}
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
+              <KumbungSensorTable
+                key={kumbung.id}
+                kumbung={kumbung}
+                sensors={sensors}
+                gatewaysById={gatewaysById}
+                isOwner={isOwner}
+                now={now}
+                onEdit={sensor => setDialog({ sensor })}
+                onDeactivate={setDeactivateTarget}
+              />
             ))}
           </div>
         )}

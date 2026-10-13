@@ -17,7 +17,8 @@ import {
   Gauge, Wifi, WifiOff,
 } from 'lucide-react';
 import { db } from '../firebase';
-import { FIREBASE_PATHS } from '@/lib/firebasePaths';
+import { useFarmContext } from '@/contexts/FarmContext';
+import KumbungSensorSummary from '@/components/KumbungSensorSummary';
 import { readTelemetryHistory, subscribeLatestTelemetry } from '@/lib/telemetryService';
 
 // ─────────────────────────────────────────────────────────────
@@ -240,15 +241,26 @@ export default function MonitoringPage() {
   const [hourlyForecast, setHourlyForecast] = useState([]);
   const [weatherLoading, setWeatherLoading] = useState(true);
 
-  // ── EFFECT 1: Query histori terbatas + live telemetry dengan fallback sensor1
+  // Sensor terpilih dari konteks farm/kumbung (bukan ID default tersembunyi)
+  const { target, sensor, kumbung } = useFarmContext();
+  const { kumbungId: targetKumbungId, sensorId: targetSensorId } = target;
+
+  // ── EFFECT 1: Query histori terbatas + live telemetry sensor terpilih
   useEffect(() => {
     let active = true;
+    setLogs([]);
+    setSensorQuality(null);
+    if (!targetKumbungId || !targetSensorId) {
+      setEspOnline(false);
+      return undefined;
+    }
     const filterCfg = TIME_FILTERS.find(filter => filter.value === activeFilter);
     const endAt = Date.now();
     const startAt = endAt - filterCfg.minutes * 60 * 1000;
 
     readTelemetryHistory(db, {
-      kumbungId: FIREBASE_PATHS.defaultKumbungId,
+      kumbungId: targetKumbungId,
+      sensorId: targetSensorId,
       startAt,
       endAt,
       maxPoints: activeFilter === 'week' ? 1200 : 300,
@@ -277,13 +289,13 @@ export default function MonitoringPage() {
     }, error => {
       console.error('Firebase telemetry error:', error);
       setEspOnline(false);
-    });
+    }, { kumbungId: targetKumbungId, sensorId: targetSensorId });
 
     return () => {
       active = false;
       unsubscribeLive();
     };
-  }, [activeFilter]);
+  }, [activeFilter, targetKumbungId, targetSensorId]);
 
   // ── EFFECT 2: Filter + format chart data setiap kali filter/logs berubah
   useEffect(() => {
@@ -382,6 +394,10 @@ export default function MonitoringPage() {
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
             <div>
               <h1 className="text-3xl font-bold mb-1">Environmental Monitoring</h1>
+              <p className="text-sm font-medium mb-1">
+                {kumbung?.name || targetKumbungId || 'Pilih kumbung'}
+                {targetSensorId && <span className="text-muted-foreground font-normal"> · {sensor?.name || targetSensorId} ({targetSensorId})</span>}
+              </p>
               <p className="text-muted-foreground text-sm flex items-center gap-2">
                 Real-time sensor trends dari hardware Tandurai
                 {espOnline ? (
@@ -423,6 +439,9 @@ export default function MonitoringPage() {
             </div>
           </div>
         </motion.div>
+
+        {/* ── Ringkasan per sensor di kumbung terpilih ── */}
+        <KumbungSensorSummary />
 
         {/* ── Latest Values Summary Bar ── */}
         {latest && (

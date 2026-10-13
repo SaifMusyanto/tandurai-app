@@ -19,9 +19,13 @@ Page → hook/page state → service (opsional) → Firebase SDK → Realtime Da
 
 ## Flow data inti
 
+### Konteks farm/kumbung/sensor
+
+`DashboardLayout` membungkus dashboard dengan `FarmProvider` (`src/contexts/FarmContext.jsx`) dan menampilkan `ContextBar` (pemilih farm → kumbung → sensor). Data berasal dari `users/{uid}/access` dan katalog (`subscribeFarmSensors`); pilihan terakhir disimpan di `localStorage` (`tandurai-context:{uid}`). Logika pemilihan murni ada di `src/lib/farmContext.js` (`resolveSelection`): pilihan tersimpan bila masih valid, lalu sensor aktif pertama. Sensor default `VITE_DEFAULT_*` hanya dipakai sebagai fallback migrasi untuk kumbung default tanpa sensor katalog dan ditandai “default lama” di `ContextBar`.
+
 ### Telemetry
 
-`HomePage`, `MonitoringPage`, `HistoricalPage`, dan `AnalyticsPage` menggunakan `subscribeLatestTelemetry` (`src/lib/telemetryService.js`). Service mengamati sensor `telemetry-v1` dan jalur legacy, memilih data utama jika tersedia, menormalisasi dengan `telemetry.js`, serta mengembalikan fungsi unsubscribe. History dibaca per tanggal Jakarta dengan query timestamp, deduplikasi sensor+timestamp dan batas maksimum.
+Home, Monitoring, Historical, Analytics, Automation, dan `TopNavbar` membaca `target` dari konteks. `subscribeLatestTelemetry` dengan target eksplisit tidak memakai jalur legacy `sensor1`; tanpa sensor (`sensorId: null`) memanggil `onData(null)`. `subscribeKumbungTelemetry` memantau latest beberapa sensor sekaligus (ringkasan Monitoring dan kolom “Data terakhir” di `/devices`). `useSensorHistory` (`src/hooks`) membaca history sensor terpilih per rentang lalu menambah live update; Historical (24 jam/7/30 hari) dan Analytics (harian/mingguan/bulanan) memakainya, menggantikan cache modul lama. Service menormalisasi dengan `telemetry.js` dan mengembalikan fungsi unsubscribe. History dibaca per tanggal Jakarta dengan query timestamp, deduplikasi sensor+timestamp dan batas maksimum.
 
 ### Operasional
 
@@ -39,7 +43,12 @@ Page → hook/page state → service (opsional) → Firebase SDK → Realtime Da
 - Gateway ESP32 login dengan Firebase Anonymous Auth. Owner memasangkan UID ke gateway (`tumbara/gateways/{id}/authUid` + `tumbara/gatewayAuthUids/{uid}`); Rules mengenali gateway dari `auth.uid`, bukan custom claims.
 - Hanya gateway yang menulis `monitoring`/`history`; status sensor `active` hanya diberikan gateway.
 - `DevicesPage.jsx` (`/devices`): pemilih farm (dari `users/{uid}/access`), daftar gateway via indeks `tumbara/farmGateways/{farmId}` (`subscribeFarmGateways`), status koneksi dari `gatewayConnectionState` (online bila heartbeat ≤ 3 menit), versi config terpasang vs terbaru, jumlah sensor. Owner dapat menambah gateway, memasangkan UID, melepas pairing, mencabut, dan mengaktifkan ulang; operator hanya membaca.
+- Laporan gateway `tumbara/gatewayAcks/{gatewayId}` ikut di-subscribe (`gateway.ack`); `sensorHealth` menurunkan status pembacaan per sensor (ok, not_found, read_error, stale, unknown) untuk kartu gateway dan kolom Pembacaan.
 - `FarmSensorsPanel.jsx` di `/devices`: sensor per kumbung via `subscribeFarmSensors` (`farmKumbungs` → `kumbungSensors` → `sensors`); owner menambah, mengubah penugasan, dan menonaktifkan sensor (`assignSensor`, `deactivateSensor`). UI anggota farm belum ada (Fase 5).
+
+### Anggota farm dan riwayat perubahan
+
+`/farm-members` (`FarmMembersPage.jsx`): daftar `farmMembers` farm terpilih (`subscribeFarmMembers`); owner menambah operator via email terverifikasi dan mencabut operator. Owner yang di-seed tanpa entri `farmMembers` ditampilkan dengan catatan. Setiap operasi owner (anggota, gateway, sensor) menulis entri append-only `tumbara/assignmentLog/{farmId}/{logId}` dalam multipath yang sama (`buildAuditEntry`); `AssignmentLogPanel` menampilkannya di `/devices` dan `/farm-members`.
 
 ### Alert
 

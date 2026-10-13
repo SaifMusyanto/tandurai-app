@@ -5,6 +5,7 @@ import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebas
 import { get, ref, set, update } from 'firebase/database';
 import {
   buildAddOperatorUpdates,
+  buildAuditEntry,
   buildAssignSensorUpdates,
   buildCreateGatewayUpdates,
   buildDeactivateSensorUpdates,
@@ -535,4 +536,62 @@ test('alert menolak farm/kumbung tidak cocok, ID tidak sesuai, dan nilai enum as
   await assertFails(set(ref(operatorDb(), 'tumbara/alerts/FARM-01/salah'), alertRecord()));
   await assertFails(set(ref(operatorDb(), 'tumbara/alerts/FARM-01/SNS-0101_temperature_high'), alertRecord({ severity: 'panik' })));
   await assertFails(set(ref(operatorDb(), 'tumbara/alerts/FARM-01/SNS-0101_temperature_high'), alertRecord({ status: 'dibaca' })));
+});
+
+// ---------------------------------------------------------------- Fase 3: ack per sensor
+
+const ackReport = (overrides = {}) => ({
+  configVersion: 1,
+  reportedAt: Date.now(),
+  sensors: { 'SNS-0101': { state: 'ok', lastReadAt: Date.now(), hardwareAddress: 'bus:1' } },
+  ...overrides,
+});
+
+test('gateway menulis laporan ack untuk sensor di config miliknya; anggota farm membacanya', async () => {
+  await assertSucceeds(set(ref(gatewayDb(), 'tumbara/gatewayAcks/GW-01'), ackReport()));
+  await assertSucceeds(set(ref(gatewayDb(), 'tumbara/gatewayAcks/GW-01'), ackReport({
+    sensors: { 'SNS-0101': { state: 'read_error', error: 'Timeout bus' } },
+  })));
+  await assertSucceeds(get(ref(operatorDb(), 'tumbara/gatewayAcks/GW-01')));
+  await assertSucceeds(get(ref(gatewayDb(), 'tumbara/gatewayAcks/GW-01')));
+  await assertFails(get(ref(outsiderDb(), 'tumbara/gatewayAcks/GW-01')));
+  await assertFails(get(ref(gatewayDb('anonGwF2'), 'tumbara/gatewayAcks/GW-01')));
+});
+
+test('ack menolak gateway lain, manusia, sensor di luar config, versi di depan config, dan state asing', async () => {
+  await assertFails(set(ref(gatewayDb('anonGwF2'), 'tumbara/gatewayAcks/GW-01'), ackReport()));
+  await assertFails(set(ref(ownerDb(), 'tumbara/gatewayAcks/GW-01'), ackReport()));
+  await assertFails(set(ref(operatorDb(), 'tumbara/gatewayAcks/GW-01'), ackReport()));
+  await assertFails(set(ref(gatewayDb(), 'tumbara/gatewayAcks/GW-01'), ackReport({ sensors: { 'SNS-LAIN': { state: 'ok' } } })));
+  await assertFails(set(ref(gatewayDb(), 'tumbara/gatewayAcks/GW-01'), ackReport({ configVersion: 2 })));
+  await assertFails(set(ref(gatewayDb(), 'tumbara/gatewayAcks/GW-01'), ackReport({ sensors: { 'SNS-0101': { state: 'mantap' } } })));
+  await assertFails(set(ref(gatewayDb(), 'tumbara/gatewayAcks/GW-01'), ackReport({ extra: true })));
+  await assertFails(set(ref(gatewayDb(), 'tumbara/gatewayAcks/GW-01'), null));
+  await adminWrite('tumbara/gateways/GW-01/status', 'inactive');
+  await assertFails(set(ref(gatewayDb(), 'tumbara/gatewayAcks/GW-01'), ackReport()));
+});
+
+// ---------------------------------------------------------------- riwayat perubahan (audit)
+
+test('owner menulis log audit bersama operasi; anggota membaca; log tidak dapat diubah', async () => {
+  const create = {
+    ...buildCreateGatewayUpdates({ farmId: 'FARM-01', gatewayId: 'GW-AUDIT', name: 'Audit', ownerUid: 'petaniOwner' }),
+    ...buildAuditEntry({ farmId: 'FARM-01', actorUid: 'petaniOwner', action: 'gateway_create', details: { gatewayId: 'GW-AUDIT' }, logId: 'log-1' }),
+  };
+  await assertSucceeds(update(ref(ownerDb()), create));
+  await assertSucceeds(get(ref(operatorDb(), 'tumbara/assignmentLog/FARM-01')));
+  await assertFails(get(ref(outsiderDb(), 'tumbara/assignmentLog/FARM-01')));
+  await assertFails(set(ref(ownerDb(), 'tumbara/assignmentLog/FARM-01/log-1'), { action: 'gateway_disable', actorUid: 'petaniOwner', createdAt: Date.now() }));
+  await assertFails(set(ref(ownerDb(), 'tumbara/assignmentLog/FARM-01/log-1'), null));
+});
+
+test('log audit menolak operator, aktor palsu, waktu lampau, aksi asing, dan farm lain', async () => {
+  const entry = (overrides = {}, actor = 'petaniOwner', farmId = 'FARM-01') =>
+    buildAuditEntry({ farmId, actorUid: actor, action: 'sensor_assign', details: { sensorId: 'SNS-0101' }, logId: `x-${Math.random().toString(36).slice(2)}`, ...overrides });
+  await assertSucceeds(update(ref(ownerDb()), entry()));
+  await assertFails(update(ref(operatorDb()), entry({}, 'operatorA')));
+  await assertFails(update(ref(ownerDb()), entry({}, 'operatorA')));
+  await assertFails(update(ref(ownerDb()), entry({ now: Date.now() - 3600000 })));
+  await assertFails(update(ref(ownerDb()), entry({}, 'petaniOwner', 'FARM-02')));
+  await assertFails(set(ref(ownerDb(), 'tumbara/assignmentLog/FARM-01/manual'), { action: 'hapus_semua', actorUid: 'petaniOwner', createdAt: Date.now() }));
 });

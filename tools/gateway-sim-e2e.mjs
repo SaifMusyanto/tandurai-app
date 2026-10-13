@@ -111,21 +111,83 @@ try {
   assert.equal(again.outbox, 0);
   step('reboot memakai refresh token (UID tetap); retry history idempoten');
 
+  // 5b. Data dummy: backfill history 1 jam (6 bucket × 2 sensor), idempoten bila diulang.
+  const filled = await rebooted.backfill({ hours: 1 });
+  assert.equal(filled.written, 12);
+  const refilled = await rebooted.backfill({ hours: 1 });
+  assert.equal(refilled.written, 0);
+  assert.equal(refilled.skipped, 12);
+  step('backfill data dummy: 12 record history (6 bucket × 2 sensor); diulang tanpa duplikat');
+
+  const ack = await adminGet(`tumbara/gatewayAcks/${GW}`);
+  assert.equal(ack.configVersion, version);
+  assert.equal(ack.sensors['SNS-SIM-02'].state, 'ok');
+  assert.equal(typeof ack.sensors['SNS-SIM-02'].lastReadAt, 'number');
+
   // 6. Owner menonaktifkan satu sensor → config baru diterapkan.
   const sensor2 = { ...(await adminGet('tumbara/sensors/SNS-SIM-02')), id: 'SNS-SIM-02' };
   await ownerPatch(owner.token, buildDeactivateSensorUpdates({ currentSensor: sensor2, configVersion: version }));
+  version += 1;
   const fresh = createGatewaySimulator({ gatewayId: GW, endpoints, stateDir, log: quiet });
   const afterDeactivate = await fresh.cycle();
-  assert.equal(afterDeactivate.appliedConfigVersion, version + 1);
+  assert.equal(afterDeactivate.appliedConfigVersion, version);
   assert.deepEqual(afterDeactivate.uploaded, ['SNS-SIM-01']);
-  step(`sensor dinonaktifkan; gateway menerapkan config v${version + 1} dan berhenti mengirim sensor tersebut`);
+  assert.equal((await adminGet(`tumbara/gatewayAcks/${GW}`)).sensors['SNS-SIM-02'], undefined);
+  step(`sensor dinonaktifkan; gateway menerapkan config v${version}, berhenti mengirim, dan sensor hilang dari laporan ack`);
 
-  // 7. Sensor tidak menjawab → versi config tidak diakui penuh.
+  // 7. Sensor tidak menjawab → versi config tidak diakui penuh; ack per sensor menjelaskan alasannya.
   const flaky = createGatewaySimulator({ gatewayId: GW, endpoints, stateDir, log: quiet, adapter: createMockSensorAdapter({ failing: ['SNS-SIM-01'] }) });
   const flakyResult = await flaky.cycle();
-  assert.equal(flakyResult.appliedConfigVersion, version + 1); // tetap versi yang sudah diakui sebelumnya (dari registry)
+  assert.equal(flakyResult.appliedConfigVersion, version); // tetap versi yang sudah diakui sebelumnya (dari registry)
   assert.deepEqual(flakyResult.uploaded, []);
-  step('sensor tidak terbaca: latest tidak diperbarui');
+  const flakyAck = await adminGet(`tumbara/gatewayAcks/${GW}`);
+  assert.equal(flakyAck.sensors['SNS-SIM-01'].state, 'not_found');
+  assert.ok(flakyAck.sensors['SNS-SIM-01'].error);
+  step('sensor tidak menjawab: latest tidak diperbarui, ack melaporkan not_found beserta alasan');
+
+  // 7b. Jaringan putus → pembacaan masuk antrean → tersambung lagi → antrean terkirim;
+  //     record antrean untuk sensor yang dinonaktifkan selama offline dibuang (ditolak Rules).
+  let networkDown = false;
+  const unstableFetch = (url, options) => (networkDown ? Promise.reject(new TypeError('fetch failed')) : fetch(url, options));
+  const added = buildAssignSensorUpdates({
+    farmId: FARM, kumbungId: K2, sensorId: 'SNS-SIM-03', gatewayId: GW, name: 'SNS-SIM-03',
+    ownerUid: owner.uid, currentSensor: null, configVersions: { [GW]: version },
+  });
+  await ownerPatch(owner.token, added.updates);
+  version = added.configVersion;
+  const net = createGatewaySimulator({ gatewayId: GW, endpoints, stateDir, log: quiet, fetchImpl: unstableFetch });
+  const online = await net.cycle();
+  assert.equal(online.appliedConfigVersion, version);
+  assert.deepEqual([...online.uploaded].sort(), ['SNS-SIM-01', 'SNS-SIM-03']);
+
+  networkDown = true;
+  const latestBefore = (await adminGet(`tumbara/monitoring/${K1}/SNS-SIM-01`)).timestamp;
+  const down = await net.cycle();
+  assert.equal(down.state, 'offline');
+  assert.equal(down.outbox, 2);
+  assert.equal((await adminGet(`tumbara/monitoring/${K1}/SNS-SIM-01`)).timestamp, latestBefore);
+  const queued = net.outboxPaths;
+  // Anggap record antrean belum pernah tersimpan; sementara itu owner menonaktifkan SNS-SIM-03.
+  for (const path of queued) await dbRequest('DELETE', path, undefined, { admin: true });
+  const sensor3 = { ...(await adminGet('tumbara/sensors/SNS-SIM-03')), id: 'SNS-SIM-03' };
+  await ownerPatch(owner.token, buildDeactivateSensorUpdates({ currentSensor: sensor3, configVersion: version }));
+  version += 1;
+
+  networkDown = false;
+  const back = await net.cycle();
+  assert.equal(back.state, 'online');
+  assert.equal(back.outbox, 0);
+  assert.deepEqual(back.uploaded, ['SNS-SIM-01']);
+  assert.equal(back.dropped, 2); // record SNS-SIM-03 dari saat offline dan dari siklus ini
+  const path01 = queued.find(path => path.includes('SNS-SIM-01'));
+  const stored01 = await adminGet(path01);
+  assert.equal(stored01.gatewayId, GW);
+  assert.ok(stored01.timestamp < (await adminGet(`tumbara/monitoring/${K1}/SNS-SIM-01`)).timestamp);
+  assert.equal(await adminGet(queued.find(path => path.includes('SNS-SIM-03'))), null);
+  const reloaded = await net.cycle();
+  assert.equal(reloaded.appliedConfigVersion, version);
+  assert.equal((await adminGet(`tumbara/gatewayAcks/${GW}`)).sensors['SNS-SIM-03'], undefined);
+  step('offline: pembacaan diantrekan lalu terkirim; record sensor yang dinonaktifkan dibuang; config baru dimuat ulang');
 
   // 8. Revoke: gateway tidak dapat mengakses lagi dan tidak dapat menghidupkan dirinya.
   await ownerPatch(owner.token, buildDisableGatewayUpdates({ gatewayId: GW, authUid: uid, ownerUid: owner.uid }));

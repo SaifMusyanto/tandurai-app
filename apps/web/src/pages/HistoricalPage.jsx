@@ -1,98 +1,71 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Helmet } from 'react-helmet';
-import { Download, Search, Filter, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Download, Search, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
-import { db } from '../firebase';
-import { subscribeLatestTelemetry } from '@/lib/telemetryService';
 import { exportToCSV, exportToExcel } from '@/lib/exportUtils.js';
+import { useSensorHistory } from '@/hooks/useSensorHistory';
+import { useFarmContext } from '@/contexts/FarmContext';
 
-// ✅ Persistent cache — tidak hilang saat navigasi antar halaman
-let cachedHistoryLog = [];
-let cachedSummary = {
-  avgTemp: '--',
-  avgHumidity: '--',
-  avgCo2: '--',
-  avgPressure: '--',
-  trends: { temp: 'up', hum: 'down', co2: 'up', pressure: 'up' },
-  changes: { temp: '0.0', hum: '0.0', co2: '0.0', pressure: '0.0' }
+const RANGES = [
+  { value: '24h', label: '24 Jam', ms: 24 * 60 * 60 * 1000 },
+  { value: '7d', label: '7 Hari', ms: 7 * 24 * 60 * 60 * 1000 },
+  { value: '30d', label: '30 Hari', ms: 30 * 24 * 60 * 60 * 1000 },
+];
+const CHART_POINTS = 200;
+
+const average = (rows, key) => {
+  const values = rows.map(row => Number(row[key])).filter(Number.isFinite);
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 };
 
+function summarize(rows) {
+  const latest = rows[rows.length - 1];
+  const previous = rows[rows.length - 2];
+  const change = key => (latest && previous ? (Number(latest[key]) || 0) - (Number(previous[key]) || 0) : 0);
+  const format = (value, digits, unit) => (value === null ? '--' : `${value.toFixed(digits)}${unit}`);
+  return {
+    avgTemp: format(average(rows, 'temperature'), 1, '°C'),
+    avgHumidity: format(average(rows, 'humidity'), 1, '%'),
+    avgCo2: format(average(rows, 'co2'), 0, ' ppm'),
+    avgPressure: format(average(rows, 'pressure'), 1, ' hPa'),
+    trends: {
+      temp: change('temperature') >= 0 ? 'up' : 'down',
+      hum: change('humidity') >= 0 ? 'up' : 'down',
+      co2: change('co2') >= 0 ? 'up' : 'down',
+      pressure: change('pressure') >= 0 ? 'up' : 'down',
+    },
+    changes: {
+      temp: Math.abs(change('temperature')).toFixed(1),
+      hum: Math.abs(change('humidity')).toFixed(1),
+      co2: Math.abs(change('co2')).toFixed(0),
+      pressure: Math.abs(change('pressure')).toFixed(1),
+    },
+  };
+}
+
 export default function HistoricalPage() {
-  const [historyLog, setHistoryLog] = useState(cachedHistoryLog);
+  const [range, setRange] = useState('24h');
   const [searchTerm, setSearchTerm] = useState('');
-  const [loading, setLoading] = useState(cachedHistoryLog.length === 0);
-  const [summary, setSummary] = useState(cachedSummary);
+  const rangeMs = RANGES.find(item => item.value === range).ms;
+  const { rows, loading, error, target } = useSensorHistory({ rangeMs, maxPoints: 2000 });
+  const { kumbung, sensor } = useFarmContext();
 
-  useEffect(() => {
-    const unsubscribe = subscribeLatestTelemetry(db, sensorData => {
-      setLoading(false);
-      if (!sensorData) return;
-
-      const newEntry = {
-        id: `log-${Date.now()}`,
-        timestamp: Date.now(),
-        temperature: sensorData.temperature ?? null,
-        humidity:    sensorData.humidity    ?? null,
-        co2:         sensorData.co2         ?? null,
-        pressure:    sensorData.pressure    ?? null,
-        espStatus:   sensorData.espStatus   ?? 'Unknown',
-        sprayStatus: sensorData.sprayStatus ?? false,
-        fanStatus:   sensorData.fanStatus   ?? false,
-      };
-
-      // ✅ Update cache dulu, baru set state
-      const updated = [newEntry, ...cachedHistoryLog].slice(0, 100);
-      cachedHistoryLog = updated;
-
-      const total = updated.length;
-      const sumTemp     = updated.reduce((a, c) => a + (Number(c.temperature) || 0), 0);
-      const sumHum      = updated.reduce((a, c) => a + (Number(c.humidity)    || 0), 0);
-      const sumCo2      = updated.reduce((a, c) => a + (Number(c.co2)         || 0), 0);
-      const sumPressure = updated.reduce((a, c) => a + (Number(c.pressure)    || 0), 0);
-
-      const avgTemp     = (sumTemp     / total).toFixed(1);
-      const avgHum      = (sumHum      / total).toFixed(1);
-      const avgCo2      = Math.round(sumCo2 / total);
-      const avgPressure = (sumPressure / total).toFixed(1);
-
-      let trends  = { temp: 'up', hum: 'up', co2: 'up', pressure: 'up' };
-      let changes = { temp: '0.0', hum: '0.0', co2: '0', pressure: '0.0' };
-
-      if (total > 1) {
-        const latest = updated[0];
-        const prev   = updated[1];
-
-        const td = ((latest.temperature || 0) - (prev.temperature || 0));
-        const hd = ((latest.humidity    || 0) - (prev.humidity    || 0));
-        const cd = ((latest.co2         || 0) - (prev.co2         || 0));
-        const pd = ((latest.pressure    || 0) - (prev.pressure    || 0));
-
-        trends  = { temp: td >= 0 ? 'up' : 'down', hum: hd >= 0 ? 'up' : 'down', co2: cd >= 0 ? 'up' : 'down', pressure: pd >= 0 ? 'up' : 'down' };
-        changes = { temp: Math.abs(td).toFixed(1), hum: Math.abs(hd).toFixed(1), co2: Math.abs(cd).toFixed(0), pressure: Math.abs(pd).toFixed(1) };
-      }
-
-      const newSummary = {
-        avgTemp:     `${avgTemp}°C`,
-        avgHumidity: `${avgHum}%`,
-        avgCo2:      `${avgCo2} ppm`,
-        avgPressure: `${avgPressure} hPa`,
-        trends,
-        changes,
-      };
-
-      // ✅ Update cache summary juga
-      cachedSummary = newSummary;
-
-      setHistoryLog(updated);
-      setSummary(newSummary);
-    });
-
-    return () => unsubscribe();
-  }, []);
+  const summary = useMemo(() => summarize(rows), [rows]);
+  const historyLog = useMemo(() => [...rows].reverse().map(row => ({
+    id: `${row.sensorId || target.sensorId}_${row.timestamp}`,
+    timestamp: row.timestamp,
+    temperature: row.temperature ?? null,
+    humidity: row.humidity ?? null,
+    co2: row.co2 ?? null,
+    pressure: row.pressure ?? null,
+    quality: row.quality?.status || 'unknown',
+    mistingStatus: row.mistingStatus ?? false,
+    sensorId: row.sensorId || target.sensorId,
+  })), [rows, target.sensorId]);
 
   const filteredData = historyLog.filter(item =>
     Object.values(item).some(val =>
@@ -100,7 +73,13 @@ export default function HistoricalPage() {
     )
   );
 
-  const chartData = [...historyLog].slice(0, 20).reverse();
+  const step = Math.max(1, Math.ceil(rows.length / CHART_POINTS));
+  const chartData = rows.filter((_, index) => index % step === 0 || index === rows.length - 1);
+  const emptyText = !target.sensorId
+    ? 'Kumbung terpilih belum punya sensor. Tambahkan sensor di halaman Perangkat.'
+    : error
+      ? `Gagal memuat history: ${error}`
+      : 'Belum ada data pada rentang ini.';
 
   const SummaryCard = ({ title, value, trend, change }) => (
     <Card>
@@ -130,9 +109,17 @@ export default function HistoricalPage() {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <h1 className="text-3xl font-bold">Historical Data</h1>
-            <p className="text-muted-foreground">Analyze past environmental conditions and system actions</p>
+            <p className="text-muted-foreground">
+              {kumbung?.name || target.kumbungId || 'Pilih kumbung'}
+              {target.sensorId && ` · ${sensor?.name || target.sensorId} (${target.sensorId})`}
+            </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            {RANGES.map(item => (
+              <Button key={item.value} variant={range === item.value ? 'default' : 'outline'} onClick={() => setRange(item.value)}>
+                {item.label}
+              </Button>
+            ))}
             <Button variant="outline" onClick={() => exportToCSV(filteredData, 'historical_data.csv')}>
               <Download size={16} className="mr-2" /> CSV
             </Button>
@@ -160,9 +147,7 @@ export default function HistoricalPage() {
               {chartData.length < 2 ? (
                 <div className="h-full w-full flex flex-col items-center justify-center border border-dashed rounded-lg gap-2">
                   <p className="text-sm text-muted-foreground">
-                    {loading
-                      ? 'Menghubungkan ke sensor...'
-                      : `Mengumpulkan data grafik... (${chartData.length}/2 titik)`}
+                    {loading ? 'Memuat history sensor…' : chartData.length ? 'Butuh minimal 2 titik data untuk grafik.' : emptyText}
                   </p>
                   {!loading && chartData.length === 1 && (
                     <p className="text-xs text-muted-foreground">Grafik muncul setelah data kedua masuk</p>
@@ -174,7 +159,7 @@ export default function HistoricalPage() {
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis
                       dataKey="timestamp"
-                      tickFormatter={(val) => val ? new Date(val).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--'}
+                      tickFormatter={(val) => val ? new Date(val).toLocaleString('id-ID', range === '24h' ? { hour: '2-digit', minute: '2-digit' } : { day: '2-digit', month: 'short', hour: '2-digit' }) : '--:--'}
                       stroke="hsl(var(--muted-foreground))"
                     />
                     <YAxis yAxisId="left"  stroke="hsl(var(--muted-foreground))" />
@@ -206,7 +191,6 @@ export default function HistoricalPage() {
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
-              <Button variant="outline" size="icon"><Filter size={16} /></Button>
             </div>
           </CardHeader>
           <CardContent>
@@ -219,17 +203,17 @@ export default function HistoricalPage() {
                     <th className="px-4 py-3">Humidity (%)</th>
                     <th className="px-4 py-3">CO₂ (ppm)</th>
                     <th className="px-4 py-3">Pressure (hPa)</th>
-                    <th className="px-4 py-3">ESP Status</th>
-                    <th className="px-4 py-3 rounded-tr-lg">Spray</th>
+                    <th className="px-4 py-3">Kualitas</th>
+                    <th className="px-4 py-3 rounded-tr-lg">Misting</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan="7" className="text-center py-8 text-muted-foreground">Menghubungkan ke sensor1...</td></tr>
+                    <tr><td colSpan="7" className="text-center py-8 text-muted-foreground">Memuat history sensor…</td></tr>
                   ) : filteredData.length === 0 ? (
-                    <tr><td colSpan="7" className="text-center py-8 text-muted-foreground">Belum ada data yang masuk. Tunggu sebentar...</td></tr>
+                    <tr><td colSpan="7" className="text-center py-8 text-muted-foreground">{searchTerm ? 'Tidak ada data yang cocok.' : emptyText}</td></tr>
                   ) : (
-                    filteredData.map((row) => (
+                    filteredData.slice(0, 500).map((row) => (
                       <tr key={row.id} className="border-b border-border hover:bg-muted/30 transition-colors">
                         <td className="px-4 py-3 font-medium">
                           {new Date(row.timestamp).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'medium' })}
@@ -239,13 +223,13 @@ export default function HistoricalPage() {
                         <td className="px-4 py-3">{row.co2 ?? '--'} ppm</td>
                         <td className="px-4 py-3">{row.pressure ?? '--'} hPa</td>
                         <td className="px-4 py-3">
-                          <span className={`px-2 py-1 rounded-full text-xs font-bold ${row.espStatus === 'Online' ? 'bg-green-500/20 text-green-600' : 'bg-red-500/20 text-red-500'}`}>
-                            {row.espStatus}
+                          <span className={`px-2 py-1 rounded-full text-xs font-bold ${row.quality === 'valid' ? 'bg-green-500/20 text-green-600' : row.quality === 'invalid' ? 'bg-red-500/20 text-red-500' : 'bg-yellow-500/20 text-yellow-700'}`}>
+                            {row.quality}
                           </span>
                         </td>
                         <td className="px-4 py-3">
-                          <span className={`px-2 py-1 rounded-full text-xs font-bold ${row.sprayStatus === true || row.sprayStatus === 'Active' ? 'bg-green-500/20 text-green-600' : 'bg-muted text-muted-foreground'}`}>
-                            {row.sprayStatus === true || row.sprayStatus === 'Active' ? 'Active' : 'Inactive'}
+                          <span className={`px-2 py-1 rounded-full text-xs font-bold ${row.mistingStatus ? 'bg-green-500/20 text-green-600' : 'bg-muted text-muted-foreground'}`}>
+                            {row.mistingStatus ? 'Active' : 'Inactive'}
                           </span>
                         </td>
                       </tr>

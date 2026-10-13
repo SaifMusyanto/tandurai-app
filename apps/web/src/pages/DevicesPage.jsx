@@ -15,11 +15,13 @@ import {
   Settings2,
   Radio,
   LifeBuoy,
+  AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-import { auth } from '../firebase';
+import { useFarmContext } from '@/contexts/FarmContext';
 import FarmSensorsPanel from '@/components/FarmSensorsPanel';
+import AssignmentLogPanel from '@/components/AssignmentLogPanel';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -43,7 +45,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   GATEWAY_OFFLINE_AFTER_MS,
   gatewayConfigPending,
@@ -52,7 +53,6 @@ import {
 import {
   createGateway,
   disableGateway,
-  loadDeviceFarms,
   pairGateway,
   reactivateGateway,
   subscribeFarmGateways,
@@ -267,6 +267,7 @@ function GatewayCard({ gateway, state, isOwner, now, onPair, onConfirm }) {
   const config = STATE_CONFIG[state];
   const StateIcon = config.icon;
   const configPending = state !== 'inactive' && gatewayConfigPending(gateway);
+  const problemSensors = Object.entries(gateway.ack?.sensors || {}).filter(([, entry]) => entry.state !== 'ok');
 
   return (
     <Card className="h-full flex flex-col">
@@ -315,6 +316,13 @@ function GatewayCard({ gateway, state, isOwner, now, onPair, onConfirm }) {
           )}
         </dl>
 
+        {state !== 'inactive' && problemSensors.length > 0 && (
+          <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-700 dark:text-yellow-400">
+            <p className="font-medium flex items-center gap-1"><AlertTriangle size={12} /> {problemSensors.length} sensor bermasalah</p>
+            <p className="mt-0.5">{problemSensors.map(([sensorId, entry]) => `${sensorId}: ${entry.error || entry.state}`).join('; ')}</p>
+          </div>
+        )}
+
         {isOwner && (
           <div className="flex gap-2 mt-auto pt-2 flex-wrap">
             {state === 'pending' && (
@@ -360,7 +368,7 @@ function RecoveryGuide() {
         <ul className="list-disc pl-5 space-y-1">
           <li><span className="text-foreground font-medium">ESP32 diganti atau memori terhapus:</span> lepas pairing, jalankan provisioning ulang di perangkat, lalu pasangkan UID baru.</li>
           <li><span className="text-foreground font-medium">Perangkat hilang/dicurigai bocor:</span> cabut gateway. Akses langsung diputus dan tidak dapat dipulihkan oleh perangkat.</li>
-          <li><span className="text-foreground font-medium">Config belum diterapkan:</span> periksa sensor yang tidak menjawab di perangkat; versi diakui hanya bila semua sensor aktif terbaca.</li>
+          <li><span className="text-foreground font-medium">Config belum diterapkan:</span> lihat sensor bermasalah pada kartu gateway dan kolom Pembacaan; versi diakui hanya bila semua sensor aktif menjawab.</li>
         </ul>
       </CardContent>
     </Card>
@@ -369,11 +377,9 @@ function RecoveryGuide() {
 
 /* ─── Halaman utama ──────────────────────────────────────────────────── */
 export default function DevicesPage() {
-  const uid = auth.currentUser?.uid;
-  const [farms, setFarms] = useState([]);
-  const [farmId, setFarmId] = useState('');
-  const [farmsLoading, setFarmsLoading] = useState(true);
-  const [farmsError, setFarmsError] = useState('');
+  // Farm mengikuti pemilih konteks global (ContextBar) agar konsisten di semua halaman.
+  const { farms, farm, isOwner, loading: farmsLoading, error: farmsError } = useFarmContext();
+  const farmId = farm?.id || '';
   const [gateways, setGateways] = useState([]);
   const [gatewaysLoading, setGatewaysLoading] = useState(false);
   const [gatewaysError, setGatewaysError] = useState('');
@@ -381,25 +387,6 @@ export default function DevicesPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [pairTarget, setPairTarget] = useState(null);
   const [confirm, setConfirm] = useState(null);
-
-  const farm = farms.find(item => item.id === farmId) || null;
-  const isOwner = farm?.role === 'owner';
-
-  useEffect(() => {
-    if (!uid) return undefined;
-    let cancelled = false;
-    setFarmsLoading(true);
-    loadDeviceFarms(uid)
-      .then(result => {
-        if (cancelled) return;
-        setFarms(result);
-        setFarmId(current => current || result[0]?.id || '');
-        setFarmsError('');
-      })
-      .catch(error => !cancelled && setFarmsError(error.message))
-      .finally(() => !cancelled && setFarmsLoading(false));
-    return () => { cancelled = true; };
-  }, [uid]);
 
   useEffect(() => {
     if (!farmId) return undefined;
@@ -442,18 +429,6 @@ export default function DevicesPage() {
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
-            {farms.length > 0 && (
-              <Select value={farmId} onValueChange={setFarmId}>
-                <SelectTrigger className="w-56" aria-label="Pilih farm">
-                  <SelectValue placeholder="Pilih farm" />
-                </SelectTrigger>
-                <SelectContent>
-                  {farms.map(item => (
-                    <SelectItem key={item.id} value={item.id}>{item.name} · {item.role}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
             {isOwner && (
               <Button onClick={() => setCreateOpen(true)}>
                 <Plus size={16} className="mr-2" /> Tambah gateway
@@ -462,11 +437,11 @@ export default function DevicesPage() {
           </div>
         </div>
 
-        {farmsLoading ? (
+        {farmsLoading && !farms.length ? (
           <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
             <Loader2 className="animate-spin" size={20} /> Memuat farm…
           </div>
-        ) : farmsError ? (
+        ) : farmsError && !farms.length ? (
           <Card><CardContent className="py-8 text-center text-red-600">Gagal memuat farm: {farmsError}</CardContent></Card>
         ) : farms.length === 0 ? (
           <Card><CardContent className="py-8 text-center text-muted-foreground">Akun Anda belum menjadi anggota farm mana pun.</CardContent></Card>
@@ -520,6 +495,8 @@ export default function DevicesPage() {
             {farm && !gatewaysLoading && !gatewaysError && (
               <FarmSensorsPanel key={farm.id} farm={farm} isOwner={isOwner} gateways={gateways} />
             )}
+
+            {farm && <AssignmentLogPanel key={`log-${farm.id}`} farmId={farm.id} />}
 
             {isOwner && <RecoveryGuide />}
           </>

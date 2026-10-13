@@ -13,6 +13,7 @@ import { ref, onValue, get } from 'firebase/database';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { subscribeLatestTelemetry } from '@/lib/telemetryService';
+import { useFarmContext } from '@/contexts/FarmContext';
 import DashboardForecastCard from '@/components/DashboardForecastCard';
 
 // ─────────────────────────────────────────────────────────────
@@ -594,10 +595,12 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, []);
 
-  // ── Telemetry v1 dengan fallback path sensor1 selama migrasi
+  // ── Telemetry sensor terpilih di konteks farm/kumbung
+  const { target } = useFarmContext();
+  const { kumbungId: targetKumbungId, sensorId: targetSensorId } = target;
   useEffect(() => subscribeLatestTelemetry(db, sensorData => {
     if (!sensorData) {
-      setSystemStatus(prev => ({ ...prev, firebaseStatus: 'disconnected' }));
+      setSystemStatus(prev => ({ ...prev, firebaseStatus: 'disconnected', networkStatus: 'disconnected', sensorsOnline: 0 }));
       return;
     }
     setKpiData(prev => {
@@ -619,7 +622,7 @@ export default function HomePage() {
   }, error => {
     console.error('Firebase telemetry error:', error);
     setSystemStatus(prev => ({ ...prev, firebaseStatus: 'error' }));
-  }), []);
+  }, { kumbungId: targetKumbungId, sensorId: targetSensorId }), [targetKumbungId, targetSensorId]);
 
   return (
     <>

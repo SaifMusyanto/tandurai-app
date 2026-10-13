@@ -18,6 +18,7 @@ import { db, auth } from '../firebase';
 import { subscribeLatestTelemetry } from '@/lib/telemetryService';
 import { TELEMETRY_STALE_AFTER_MS } from '@/lib/telemetry';
 import { evaluateSensor } from '@/lib/alerts';
+import { useFarmContext } from '@/contexts/FarmContext';
 import { subscribeFarmAlerts, syncFarmAlert } from '@/lib/alertsService';
 
 const OFFLINE_AFTER_MS = TELEMETRY_STALE_AFTER_MS;
@@ -70,10 +71,16 @@ export default function TopNavbar() {
     return () => clearInterval(timer);
   }, []);
 
-  // ── 2. Live telemetry; histori hanya ditulis oleh pengirim ESP32
+  // ── 2. Live telemetry sensor terpilih di konteks farm/kumbung
+  const { target } = useFarmContext();
+  const { kumbungId: targetKumbungId, sensorId: targetSensorId } = target;
   useEffect(() => subscribeLatestTelemetry(db, data => {
     if (!data) {
       setIsEspOnline(false);
+      setLiveData({ temperature: '--', humidity: '--' });
+      setLastSyncText(targetSensorId ? 'Belum ada data' : 'Belum ada sensor');
+      alertContextRef.current = null; // jangan tulis alert offline untuk sensor tanpa data
+      offlineRecordedRef.current = true;
       return;
     }
     const now = data.timestamp || Date.now();
@@ -90,7 +97,7 @@ export default function TopNavbar() {
       ...evaluateSensor(data).map(alert => syncFarmAlert(db, context, alert, now)),
       syncFarmAlert(db, context, resolvedDeviceAlert, now),
     ]).catch(error => console.error('Gagal memperbarui alert:', error));
-  }), []);
+  }, undefined, { kumbungId: targetKumbungId, sensorId: targetSensorId }), [targetKumbungId, targetSensorId]);
 
   // ── 3. Alert aktif dari seluruh farm user (tumbara/alerts/{farmId})
   useEffect(() => {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Helmet } from 'react-helmet';
 import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,8 +9,7 @@ import {
 } from 'recharts';
 import { Lightbulb, TrendingUp, Activity, Loader2, Thermometer, Droplets, Wind, Gauge } from 'lucide-react';
 
-import { db } from '../firebase';
-import { subscribeLatestTelemetry } from '@/lib/telemetryService';
+import { useSensorHistory } from '@/hooks/useSensorHistory';
 
 // ─── Scoring helpers ──────────────────────────────────────────
 const scoreTempStability = (logs) => {
@@ -44,9 +43,8 @@ const calcAllScores = (logs) => {
   return { environmental: env, efficiency, automation, resource, stability, reliability: logs.length > 0 ? 99 : 0 };
 };
 
-// ✅ Module-level cache — persists across navigations
-let cachedLogs   = [];
-let cachedScores = { environmental: 0, efficiency: 0, automation: 0, resource: 0, stability: 0, reliability: 0 };
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TIMEFRAME_RANGE = { daily: DAY_MS, weekly: 7 * DAY_MS, monthly: 30 * DAY_MS };
 
 // ─── ScoreCard ────────────────────────────────────────────────
 const ScoreCard = ({ title, score, trend, loading }) => {
@@ -93,45 +91,30 @@ const StatBar = ({ label, value, unit, color }) => (
 
 // ─── Main Page ────────────────────────────────────────────────
 export default function AnalyticsPage() {
-  const [logs, setLogs]           = useState(cachedLogs);
   const [timeframe, setTimeframe] = useState('daily');
-  const [loading, setLoading]     = useState(cachedLogs.length === 0);
-  const [scores, setScores]       = useState(cachedScores);
-
-  useEffect(() => {
-    const unsub = subscribeLatestTelemetry(db, d => {
-      setLoading(false);
-      if (!d) return;
-      const entry = {
-        id:          `log-${Date.now()}`,
-        timestamp:   Date.now(),
-        temperature: d.temperature  ?? null,
-        humidity:    d.humidity     ?? null,
-        co2:         d.co2          ?? null,
-        pressure:    d.pressure     ?? null,
-        espStatus:   d.espStatus    ?? 'Unknown',
-        sprayStatus: d.sprayStatus  ?? false,
-        fanStatus:   d.fanStatus    ?? false,
-      };
-
-      // ✅ Update cache dulu, baru set state
-      const updated    = [entry, ...cachedLogs].slice(0, 200);
-      cachedLogs       = updated;
-      cachedScores     = calcAllScores(updated);
-
-      setLogs(updated);
-      setScores(cachedScores);
-    });
-
-    return () => unsub();
-  }, []);
+  // History sensor terpilih (konteks farm/kumbung) untuk rentang timeframe, terbaru di depan.
+  const { rows, loading } = useSensorHistory({ rangeMs: TIMEFRAME_RANGE[timeframe], maxPoints: 2000 });
+  const logs = useMemo(() => [...rows].reverse().map(row => ({
+    id:          `${row.sensorId}_${row.timestamp}`,
+    timestamp:   row.timestamp,
+    temperature: row.temperature ?? null,
+    humidity:    row.humidity    ?? null,
+    co2:         row.co2         ?? null,
+    pressure:    row.pressure    ?? null,
+    sprayStatus: row.mistingStatus ?? false,
+    fanStatus:   row.fanStatus   ?? false,
+  })), [rows]);
+  const scores = useMemo(() => calcAllScores(logs), [logs]);
 
   // ── Derive chart data from logs (oldest→newest for charts) ──
   const logsAsc = [...logs].reverse();
 
-  const trendCount = timeframe === 'daily' ? 20 : timeframe === 'weekly' ? 50 : 100;
-  const trendData  = logsAsc.slice(-trendCount).map(d => ({
-    time:        new Date(d.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+  // Seluruh rentang di-downsample agar grafik mewakili timeframe, bukan hanya titik terakhir.
+  const trendCount = timeframe === 'daily' ? 48 : timeframe === 'weekly' ? 84 : 120;
+  const trendStep  = Math.max(1, Math.ceil(logsAsc.length / trendCount));
+  const timeLabel  = timeframe === 'daily' ? { hour: '2-digit', minute: '2-digit' } : { day: '2-digit', month: 'short', hour: '2-digit' };
+  const trendData  = logsAsc.filter((_, index) => index % trendStep === 0).map(d => ({
+    time:        new Date(d.timestamp).toLocaleString('id-ID', timeLabel),
     temperature: d.temperature,
     humidity:    d.humidity,
     co2:         d.co2,
@@ -144,7 +127,7 @@ export default function AnalyticsPage() {
     const avgTemp    = slice.reduce((a, c) => a + (c.temperature || 0), 0) / slice.length;
     const stability  = Math.round(slice.filter(d => d.temperature >= 26 && d.temperature <= 31).length / slice.length * 100);
     const efficiency = Math.round(slice.filter(d => d.humidity >= 70 && d.humidity <= 85).length / slice.length * 100);
-    const label      = new Date(slice[0]?.timestamp || Date.now()).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    const label      = new Date(slice[0]?.timestamp || Date.now()).toLocaleString('id-ID', timeLabel);
     return { label, stability, efficiency, avgTemp: Math.round(avgTemp * 10) / 10 };
   });
 

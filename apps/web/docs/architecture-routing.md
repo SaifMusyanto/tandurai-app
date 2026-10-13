@@ -27,6 +27,7 @@ Router `react-router-dom` (`BrowserRouter`, `Routes`, `Route`; `Navigate` juga d
 | `/ai-forecast` | `AIForecastPage` |
 | `/automation` | `AutomationPage` |
 | `/devices` | `DevicesPage` |
+| `/farm-members` | `FarmMembersPage` |
 | `/alerts` | `AlertsPage` |
 | `/historical` | `HistoricalPage` |
 | `/analytics` | `AnalyticsPage` |

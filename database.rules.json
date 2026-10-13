@@ -491,6 +491,90 @@
             ".validate": "newData.hasChildren(['farmId', 'kumbungId', 'sensorId', 'sensor', 'severity', 'status', 'updatedAt']) && newData.child('farmId').val() === $farmId && root.child('tumbara').child('kumbungs').child(newData.child('kumbungId').val()).child('farmId').val() === $farmId && newData.child('sensorId').isString() && $alertId === newData.child('sensorId').val() + '_' + newData.child('sensor').val() && (newData.child('sensor').val() === 'temperature_high' || newData.child('sensor').val() === 'humidity_low' || newData.child('sensor').val() === 'co2_high' || newData.child('sensor').val() === 'device_offline') && (newData.child('severity').val() === 'critical' || newData.child('severity').val() === 'warning' || newData.child('severity').val() === 'normal') && (newData.child('status').val() === 'active' || newData.child('status').val() === 'resolved') && newData.child('updatedAt').isNumber() && newData.child('updatedAt').val() <= now + 300000"
           }
         }
+      },
+      "gatewayAcks": {
+        "$gatewayId": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('gateways').child($gatewayId).child('farmId').val()).val() === true || (auth != null && root.child('tumbara').child('gatewayAuthUids').child(auth.uid).val() !== null && root.child('tumbara').child('gatewayAuthUids').child(auth.uid).val() === $gatewayId && root.child('tumbara').child('gateways').child($gatewayId).child('authUid').val() === auth.uid && root.child('tumbara').child('gateways').child($gatewayId).child('status').val() !== 'inactive'))",
+          ".write": "(auth != null && root.child('tumbara').child('gatewayAuthUids').child(auth.uid).val() !== null && root.child('tumbara').child('gatewayAuthUids').child(auth.uid).val() === $gatewayId && root.child('tumbara').child('gateways').child($gatewayId).child('authUid').val() === auth.uid && root.child('tumbara').child('gateways').child($gatewayId).child('status').val() !== 'inactive') && newData.exists()",
+          ".validate": "newData.hasChildren(['configVersion', 'reportedAt']) && newData.child('configVersion').isNumber() && newData.child('configVersion').val() >= 0 && newData.child('configVersion').val() <= root.child('tumbara').child('gatewayConfigs').child($gatewayId).child('configVersion').val() && newData.child('reportedAt').isNumber() && newData.child('reportedAt').val() <= now + 300000",
+          "configVersion": {
+            ".validate": "newData.isNumber()"
+          },
+          "reportedAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "sensors": {
+            "$sensorId": {
+              ".validate": "root.child('tumbara').child('gatewayConfigs').child($gatewayId).child('sensors').child($sensorId).exists() && newData.hasChildren(['state']) && (newData.child('state').val() === 'ok' || newData.child('state').val() === 'not_found' || newData.child('state').val() === 'read_error')",
+              "state": {
+                ".validate": "newData.isString()"
+              },
+              "error": {
+                ".validate": "newData.isString() && newData.val().length <= 200"
+              },
+              "hardwareAddress": {
+                ".validate": "newData.isString() && newData.val().length <= 128"
+              },
+              "lastReadAt": {
+                ".validate": "newData.isNumber() && newData.val() <= now + 300000"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "assignmentLog": {
+        "$farmId": {
+          ".read": "auth != null && root.child('users').child(auth.uid).child('access').child('farms').child($farmId).val() === true",
+          ".indexOn": [
+            "createdAt"
+          ],
+          "$logId": {
+            ".write": "auth != null && (root.child('users').child(auth.uid).child('access').child('farmRoles').child($farmId).val() === 'owner' && root.child('users').child(auth.uid).child('access').child('farms').child($farmId).val() === true) && !data.exists() && newData.exists()",
+            ".validate": "newData.hasChildren(['action', 'actorUid', 'createdAt']) && newData.child('actorUid').val() === auth.uid && newData.child('createdAt').isNumber() && newData.child('createdAt').val() >= now - 300000 && newData.child('createdAt').val() <= now + 300000 && (newData.child('action').val() === 'operator_add' || newData.child('action').val() === 'operator_remove' || newData.child('action').val() === 'gateway_create' || newData.child('action').val() === 'gateway_pair' || newData.child('action').val() === 'gateway_unpair' || newData.child('action').val() === 'gateway_disable' || newData.child('action').val() === 'gateway_reactivate' || newData.child('action').val() === 'sensor_assign' || newData.child('action').val() === 'sensor_move' || newData.child('action').val() === 'sensor_update' || newData.child('action').val() === 'sensor_deactivate')",
+            "action": {
+              ".validate": "newData.isString()"
+            },
+            "actorUid": {
+              ".validate": "newData.isString()"
+            },
+            "createdAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "sensorId": {
+              ".validate": "newData.isString() && newData.val().length <= 96"
+            },
+            "gatewayId": {
+              ".validate": "newData.isString() && newData.val().length <= 96"
+            },
+            "targetUid": {
+              ".validate": "newData.isString() && newData.val().length <= 128"
+            },
+            "fromKumbungId": {
+              ".validate": "newData.isString() && newData.val().length <= 96"
+            },
+            "toKumbungId": {
+              ".validate": "newData.isString() && newData.val().length <= 96"
+            },
+            "fromGatewayId": {
+              ".validate": "newData.isString() && newData.val().length <= 96"
+            },
+            "toGatewayId": {
+              ".validate": "newData.isString() && newData.val().length <= 96"
+            },
+            "configVersion": {
+              ".validate": "newData.isNumber()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        }
       }
     },
     "userDirectory": {

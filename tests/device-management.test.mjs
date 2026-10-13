@@ -3,12 +3,16 @@ import assert from 'node:assert/strict';
 import {
   GATEWAY_OFFLINE_AFTER_MS,
   buildAssignSensorUpdates,
+  buildAuditEntry,
+  sensorAssignmentAction,
   buildCreateGatewayUpdates,
   emailDirectoryKey,
   gatewayConfigPending,
   gatewayConnectionState,
+  sensorHealth,
 } from '../apps/web/src/lib/deviceManagementPlan.js';
 import { alertId, buildAlertRecord, hasAlertContext, sortAlerts } from '../apps/web/src/lib/alerts.js';
+import { readStoredSelection, resolveSelection, writeStoredSelection } from '../apps/web/src/lib/farmContext.js';
 
 const now = 1_800_000_000_000;
 
@@ -73,4 +77,52 @@ test('record alert per sensor membawa konteks farm dan transisi aktif/pulih', ()
 
   assert.equal(hasAlertContext({ farmId: 'FARM-01', kumbungId: 'K1' }), false);
   assert.deepEqual(sortAlerts([{ status: 'resolved', updatedAt: 9 }, { status: 'active', updatedAt: 1 }]).map(a => a.status), ['active', 'resolved']);
+});
+
+test('kesehatan sensor dari laporan ack gateway', () => {
+  const sensor = { id: 'S1', status: 'active' };
+  assert.equal(sensorHealth({ ...sensor, status: 'inactive' }, null, now).state, 'inactive');
+  assert.equal(sensorHealth(sensor, null, now).state, 'unknown');
+  assert.equal(sensorHealth(sensor, { sensors: { S1: { state: 'ok', lastReadAt: now - 1000 } } }, now).state, 'ok');
+  assert.equal(sensorHealth(sensor, { sensors: { S1: { state: 'ok', lastReadAt: now - GATEWAY_OFFLINE_AFTER_MS - 1 } } }, now).state, 'stale');
+  const broken = sensorHealth(sensor, { sensors: { S1: { state: 'not_found', error: 'tidak menjawab' } } }, now);
+  assert.equal(broken.state, 'not_found');
+  assert.equal(broken.error, 'tidak menjawab');
+});
+
+test('konteks dashboard memakai pilihan tersimpan yang valid dan jatuh ke opsi pertama', () => {
+  const farms = [{ id: 'F1' }, { id: 'F2' }];
+  const kumbungs = [{ id: 'K1' }, { id: 'K2' }];
+  const sensors = [
+    { id: 'S1', kumbungId: 'K1', status: 'pending' },
+    { id: 'S2', kumbungId: 'K1', status: 'active' },
+    { id: 'S3', kumbungId: 'K2', status: 'inactive' },
+  ];
+  assert.deepEqual(resolveSelection({ farms, kumbungs, sensors, stored: {} }), { farmId: 'F1', kumbungId: 'K1', sensorId: 'S2', legacy: false });
+  assert.equal(resolveSelection({ farms, kumbungs, sensors, stored: { sensorId: 'S1' } }).sensorId, 'S1');
+  assert.equal(resolveSelection({ farms, kumbungs, sensors, stored: { farmId: 'F9', kumbungId: 'K2' } }).farmId, 'F1');
+  assert.deepEqual(resolveSelection({ farms, kumbungs, sensors, stored: { kumbungId: 'K2' } }), { farmId: 'F1', kumbungId: 'K2', sensorId: null, legacy: false });
+  const legacy = resolveSelection({ farms, kumbungs: [{ id: 'FARM-01-K01' }], sensors: [], stored: {} });
+  assert.deepEqual(legacy, { farmId: 'F1', kumbungId: 'FARM-01-K01', sensorId: 'SNS-0101', legacy: true });
+  assert.deepEqual(resolveSelection({}), { farmId: null, kumbungId: null, sensorId: null, legacy: false });
+});
+
+test('pilihan konteks disimpan per user dan tahan terhadap storage rusak', () => {
+  const store = new Map();
+  const storage = { getItem: key => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) };
+  writeStoredSelection('u1', { farmId: 'F1', kumbungId: 'K1', sensorId: 'S1', legacy: true }, storage);
+  assert.deepEqual(readStoredSelection('u1', storage), { farmId: 'F1', kumbungId: 'K1', sensorId: 'S1' });
+  assert.deepEqual(readStoredSelection('u2', storage), {});
+  store.set('tandurai-context:u3', '{rusak');
+  assert.deepEqual(readStoredSelection('u3', storage), {});
+});
+
+test('entri audit hanya membawa field yang diisi dan menolak aksi asing', () => {
+  const updates = buildAuditEntry({ farmId: 'F1', actorUid: 'owner', action: 'sensor_move', details: { sensorId: 'S1', fromKumbungId: 'K1', toKumbungId: '', configVersion: 0 }, now, logId: 'L1' });
+  assert.deepEqual(updates, { 'tumbara/assignmentLog/F1/L1': { action: 'sensor_move', actorUid: 'owner', createdAt: now, sensorId: 'S1', fromKumbungId: 'K1', configVersion: 0 } });
+  assert.throws(() => buildAuditEntry({ farmId: 'F1', actorUid: 'owner', action: 'hapus' }));
+  assert.equal(sensorAssignmentAction(null, { kumbungId: 'K1', gatewayId: 'G1' }), 'sensor_assign');
+  assert.equal(sensorAssignmentAction({ kumbungId: 'K1', gatewayId: 'G1', status: 'active' }, { kumbungId: 'K2', gatewayId: 'G1' }), 'sensor_move');
+  assert.equal(sensorAssignmentAction({ kumbungId: 'K1', gatewayId: 'G1', status: 'active' }, { kumbungId: 'K1', gatewayId: 'G1' }), 'sensor_update');
+  assert.equal(sensorAssignmentAction({ kumbungId: 'K1', gatewayId: 'G1', status: 'inactive' }, { kumbungId: 'K1', gatewayId: 'G1' }), 'sensor_assign');
 });

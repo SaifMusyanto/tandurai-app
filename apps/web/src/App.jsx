@@ -8,9 +8,9 @@ import HomePage from './pages/HomePage.jsx';
 import MonitoringPage from './pages/MonitoringPage.jsx';
 import AutomationPage from './pages/AutomationPage.jsx';
 import DevicesPage from './pages/DevicesPage.jsx';
+import FarmMembersPage from './pages/FarmMembersPage.jsx';
 import AlertsPage from './pages/AlertsPage.jsx';
 import HistoricalPage from './pages/HistoricalPage.jsx';
-import AnalyticsPage from './pages/AnalyticsPage.jsx';
 import ReportsPage from './pages/ReportsPage.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
 import OperationsPage from './pages/OperationsExperiencePage.jsx';
@@ -76,9 +76,11 @@ function App() {
             <Route path="/ai-forecast" element={<AIForecastPage />} />
             <Route path="/automation" element={<AutomationPage />} />
             <Route path="/devices" element={<DevicesPage />} />
+            <Route path="/farm-members" element={<FarmMembersPage />} />
             <Route path="/alerts" element={<AlertsPage />} />
             <Route path="/historical" element={<HistoricalPage />} />
-            <Route path="/analytics" element={<AnalyticsPage />} />
+            {/* Analytics disembunyikan sementara; halaman tetap ada di pages/AnalyticsPage.jsx. */}
+            <Route path="/analytics" element={<Navigate to="/" replace />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={

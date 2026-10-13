@@ -24,7 +24,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ref, onValue, set } from 'firebase/database';
 import { db } from '../firebase';
-import { FIREBASE_PATHS } from '@/lib/firebasePaths';
+import { useFarmContext } from '@/contexts/FarmContext';
 import { readTelemetryHistory } from '@/lib/telemetryService';
 import {
   AlertDialog,
@@ -76,15 +76,21 @@ export default function AutomationPage() {
   const [harvestConfig, setHarvestConfig] = useState(DEFAULT_HARVEST_CONFIG);
   const [isSavingHarvest, setIsSavingHarvest] = useState(false);
 
+  const { target } = useFarmContext();
+  const { kumbungId: targetKumbungId, sensorId: targetSensorId } = target;
+
   useEffect(() => {
+    setHistory([]);
+    if (!targetKumbungId || !targetSensorId) return;
     const endAt = Date.now();
     readTelemetryHistory(db, {
-      kumbungId: FIREBASE_PATHS.defaultKumbungId,
+      kumbungId: targetKumbungId,
+      sensorId: targetSensorId,
       startAt: endAt - DAY_MS,
       endAt,
       maxPoints: 200,
     }).then(setHistory).catch(error => console.error('Gagal membaca histori telemetry:', error));
-  }, []);
+  }, [targetKumbungId, targetSensorId]);
 
   useEffect(() => {
     const configRef = ref(db, 'tumbara/harvest/config');

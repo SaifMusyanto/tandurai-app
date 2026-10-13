@@ -9,10 +9,10 @@ import {
   Cpu,
   Bell,
   Database,
-  BarChart3,
   FileText,
   Settings,
   BrainCircuit,
+  Users,
   Menu,
   X,
 } from 'lucide-react';
@@ -26,9 +26,9 @@ const menuItems = [
   { path: '/ai-forecast', label: 'Perkiraan Panen AI', icon: BrainCircuit },
   { path: '/automation', label: 'Automation Control', icon: Sliders },
   { path: '/devices', label: 'Devices', icon: Cpu },
+  { path: '/farm-members', label: 'Anggota Farm', icon: Users },
   { path: '/alerts', label: 'Alerts', icon: Bell },
   { path: '/historical', label: 'Historical Data', icon: Database },
-  { path: '/analytics', label: 'Analytics', icon: BarChart3 },
   { path: '/reports', label: 'Reports', icon: FileText },
   { path: '/settings', label: 'Settings', icon: Settings },
 ];

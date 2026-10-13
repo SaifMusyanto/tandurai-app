@@ -6,6 +6,7 @@
 //   node tools/gateway-simulator.mjs provision --gateway GW-01   # sign up anonim, tampilkan UID untuk pairing
 //   node tools/gateway-simulator.mjs run --gateway GW-01 [--once] [--interval 10]
 //   node tools/gateway-simulator.mjs status --gateway GW-01
+//   npm run simulate:gateway backfill GW-01 48                    # data dummy: history 48 jam ke belakang
 //   node tools/gateway-simulator.mjs reset --gateway GW-01       # hapus "NVS" (perlu pairing ulang)
 //
 // Mode emulator aktif otomatis bila FIREBASE_AUTH_EMULATOR_HOST dan
@@ -28,6 +29,7 @@ const HEARTBEAT_MS = 60 * 1000;
 const OUTBOX_LIMIT = 500;
 
 export class PermissionDeniedError extends Error {}
+export class NetworkError extends Error {}
 export class HttpError extends Error {
   constructor(status, message) {
     super(message);
@@ -88,13 +90,16 @@ export function createMockSensorAdapter({ failing = [] } = {}) {
   const profileFor = sensorId => profiles[[...sensorId].reduce((sum, c) => sum + c.charCodeAt(0), 0) % profiles.length];
   return {
     probe: ({ sensorId }) => !failingSet.has(sensorId),
-    read: ({ sensorId }) => {
+    read: ({ sensorId }, at = Date.now()) => {
       if (failingSet.has(sensorId)) return null;
       const profile = profileFor(sensorId);
+      // Pola harian (WIB): siang lebih hangat dan kering, malam lebih lembap.
+      const hour = (new Date(at).getUTCHours() + 7) % 24;
+      const daily = Math.sin(((hour - 8) / 24) * 2 * Math.PI);
       return {
-        temperature: between(profile.temperature, 1),
-        humidity: between(profile.humidity, 1),
-        co2: between(profile.co2, 0),
+        temperature: Number((between(profile.temperature, 2) + daily * 1.2).toFixed(1)),
+        humidity: Number(Math.min(100, between(profile.humidity, 2) - daily * 3).toFixed(1)),
+        co2: Math.round(between(profile.co2, 0) + daily * 25),
         pressure: between([1007, 1009], 1),
       };
     },
@@ -105,10 +110,11 @@ export function createGatewaySimulator({
   gatewayId,
   endpoints = resolveEndpoints(),
   stateDir = DEFAULT_STATE_DIR,
-  firmwareVersion = 'esp32-gateway-sim/0.2.0',
+  firmwareVersion = 'esp32-gateway-sim/0.3.0',
   adapter = createMockSensorAdapter(),
   log = message => console.log(`[${gatewayId}] ${message}`),
   now = () => Date.now(),
+  fetchImpl = (...args) => fetch(...args),
 }) {
   if (!/^[A-Za-z0-9_-]{1,96}$/.test(gatewayId || '')) throw new Error('gatewayId tidak valid.');
   const statePath = join(stateDir, `${gatewayId}.json`);
@@ -117,11 +123,16 @@ export function createGatewaySimulator({
   let nvs = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : null;
   let idToken = null;
   let idTokenExpiresAt = 0;
+  let paired = false;
   let config = null;
   let appliedConfigVersion = null;
   let lastConfigPollAt = 0;
   let lastHeartbeatAt = 0;
   let ackPending = false;
+  let activeSensorIds = new Set(); // sensor enabled + status active setelah config diterapkan
+  // Kontrak ack per sensor (tumbara/gatewayAcks/{gatewayId}): ok | not_found | read_error.
+  let sensorStates = {};
+  let reportDirty = false;
   const outbox = [];
 
   function saveNvs(next) {
@@ -132,8 +143,16 @@ export function createGatewaySimulator({
     nvs = next;
   }
 
+  async function request(url, options) {
+    try {
+      return await fetchImpl(url, options);
+    } catch (error) {
+      throw new NetworkError(`Jaringan gagal: ${error.message}`);
+    }
+  }
+
   async function postJson(url, body, contentType = 'application/json') {
-    const response = await fetch(url, {
+    const response = await request(url, {
       method: 'POST',
       headers: { 'Content-Type': contentType },
       body: contentType === 'application/json' ? JSON.stringify(body) : new URLSearchParams(body).toString(),
@@ -176,7 +195,7 @@ export function createGatewaySimulator({
   async function rtdb(method, path, body, retried = false) {
     await ensureToken();
     const params = new URLSearchParams({ ...endpoints.dbParams, auth: idToken });
-    const response = await fetch(`${endpoints.dbBase}/${path}.json?${params}`, {
+    const response = await request(`${endpoints.dbBase}/${path}.json?${params}`, {
       method,
       headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -228,24 +247,39 @@ export function createGatewaySimulator({
       .map(([sensorId, entry]) => ({ sensorId, ...entry }));
   }
 
+  function setSensorState(sensorId, next) {
+    const previous = sensorStates[sensorId];
+    if (previous?.state !== next.state || (previous?.error ?? null) !== (next.error ?? null)) reportDirty = true;
+    sensorStates[sensorId] = { ...previous, ...next };
+  }
+
+  /** Terapkan config idempoten: probe setiap sensor, aktifkan yang menjawab, catat ack per sensor. */
   async function applyConfig() {
-    const failures = [];
+    const nextStates = {};
+    const nextActive = new Set();
     for (const sensor of enabledSensors()) {
+      const base = { hardwareAddress: sensor.hardwareAddress || null, lastReadAt: sensorStates[sensor.sensorId]?.lastReadAt || null };
       if (!adapter.probe(sensor)) {
-        failures.push(sensor.sensorId);
+        nextStates[sensor.sensorId] = { ...base, state: 'not_found', error: 'Sensor tidak menjawab saat probe' };
         continue;
       }
+      nextStates[sensor.sensorId] = { ...base, state: 'ok', error: null };
       const status = await rtdb('GET', `tumbara/sensors/${sensor.sensorId}/status`);
       if (status === 'pending') await rtdb('PUT', `tumbara/sensors/${sensor.sensorId}/status`, 'active');
+      if (status === 'pending' || status === 'active') nextActive.add(sensor.sensorId);
     }
+    sensorStates = nextStates; // sensor yang dilepas dari config hilang dari laporan
+    activeSensorIds = nextActive;
+    reportDirty = true;
+    const failures = Object.entries(nextStates).filter(([, entry]) => entry.state !== 'ok').map(([id]) => id);
     if (failures.length) {
-      // Belum ada kontrak ack per sensor: jangan akui versi penuh.
-      log(`Config v${config.configVersion} belum diakui; sensor tidak menjawab: ${failures.join(', ')}`);
+      // Versi penuh hanya diakui bila semua sensor menjawab; detail ada di laporan ack per sensor.
+      log(`Config v${config.configVersion} belum diakui penuh; sensor bermasalah: ${failures.join(', ')}`);
       return false;
     }
     appliedConfigVersion = config.configVersion;
     ackPending = true;
-    log(`Config v${config.configVersion} diterapkan (${enabledSensors().length} sensor aktif).`);
+    log(`Config v${config.configVersion} diterapkan (${nextActive.size} sensor aktif).`);
     return true;
   }
 
@@ -257,63 +291,185 @@ export function createGatewaySimulator({
     ackPending = false;
   }
 
-  async function flushOutbox() {
-    while (outbox.length) {
-      const { path, record } = outbox[0];
-      // Respons PUT bisa hilang: cek dulu apakah record (key deterministik) sudah tersimpan.
-      const existing = await rtdb('GET', path);
-      if (!existing) await rtdb('PUT', path, record);
-      outbox.shift();
-    }
+  async function writeReport() {
+    const sensors = Object.fromEntries(Object.entries(sensorStates).map(([sensorId, entry]) => [
+      sensorId,
+      Object.fromEntries(Object.entries(entry).filter(([, value]) => value !== null && value !== undefined)),
+    ]));
+    await rtdb('PUT', `tumbara/gatewayAcks/${gatewayId}`, {
+      configVersion: config.configVersion,
+      reportedAt: now(),
+      ...(Object.keys(sensors).length ? { sensors } : {}),
+    });
+    reportDirty = false;
   }
 
-  async function sampleAndUpload() {
-    const written = [];
+  /** Baca sensor lokal (tanpa jaringan); history masuk outbox sebelum upload. */
+  function readSensors() {
+    const readings = [];
     for (const sensor of enabledSensors()) {
-      const status = await rtdb('GET', `tumbara/sensors/${sensor.sensorId}/status`);
-      if (status !== 'active') continue;
+      if (!activeSensorIds.has(sensor.sensorId)) continue;
       const reading = adapter.read(sensor);
       if (!reading) {
+        setSensorState(sensor.sensorId, { state: 'read_error', error: 'Pembacaan gagal' });
         log(`Sensor ${sensor.sensorId} tidak terbaca; latest tidak diperbarui.`);
         continue;
       }
       const timestamp = now();
+      setSensorState(sensor.sensorId, { state: 'ok', error: null, lastReadAt: timestamp });
       const payload = {
         ...buildTelemetryPayload({ farmId: config.farmId, kumbungId: sensor.kumbungId, sensorId: sensor.sensorId, timestamp, ...reading }),
         gatewayId,
       };
-      await rtdb('PUT', `tumbara/monitoring/${sensor.kumbungId}/${sensor.sensorId}`, payload);
       const path = `tumbara/history/${sensor.kumbungId}/${jakartaDateKey(timestamp)}/${historyEntryId(sensor.sensorId, timestamp)}`;
       if (outbox.length >= OUTBOX_LIMIT) outbox.shift();
       outbox.push({ path, record: { ...payload, bucketStart: historyBucketStart(timestamp) } });
-      written.push(sensor.sensorId);
+      readings.push({ sensor, payload });
     }
-    await flushOutbox();
-    return written;
+    return readings;
   }
 
-  /** Satu iterasi loop firmware. Mengembalikan ringkasan status untuk log/test. */
+  async function uploadLatest(readings) {
+    const uploaded = [];
+    for (const { sensor, payload } of readings) {
+      try {
+        await rtdb('PUT', `tumbara/monitoring/${sensor.kumbungId}/${sensor.sensorId}`, payload);
+        uploaded.push(sensor.sensorId);
+      } catch (error) {
+        if (!(error instanceof PermissionDeniedError)) throw error;
+        // Assignment berubah sejak config terakhir: muat ulang config pada siklus berikutnya.
+        log(`Latest ${sensor.sensorId} ditolak; assignment kemungkinan berubah.`);
+        lastConfigPollAt = 0;
+      }
+    }
+    return uploaded;
+  }
+
+  async function flushOutbox() {
+    let dropped = 0;
+    while (outbox.length) {
+      const { path, record } = outbox[0];
+      try {
+        // Respons PUT bisa hilang: cek dulu apakah record (key deterministik) sudah tersimpan.
+        const existing = await rtdb('GET', path);
+        if (!existing) await rtdb('PUT', path, record);
+      } catch (error) {
+        if (!(error instanceof PermissionDeniedError)) throw error;
+        // Record antrean untuk sensor yang sudah dipindah/nonaktif ditolak Rules: buang agar
+        // antrean tidak macet. Assignment baru berlaku untuk pembacaan berikutnya saja.
+        dropped += 1;
+        lastConfigPollAt = 0;
+      }
+      outbox.shift();
+    }
+    if (dropped) log(`${dropped} record antrean dibuang karena ditolak Rules (assignment berubah).`);
+    return dropped;
+  }
+
+  /**
+   * Data dummy untuk demo: isi history sensor aktif `hours` jam ke belakang, satu record per
+   * bucket 10 menit, lewat jalur gateway yang sama (divalidasi Rules). Record yang sudah ada dilewati.
+   */
+  async function backfill({ hours = 48, concurrency = 8 } = {}) {
+    if (!nvs?.refreshToken) throw new Error('Belum ter-provision. Jalankan perintah provision.');
+    await ensureToken();
+    if (!(await isPaired())) throw new Error(`UID ${nvs.uid} belum dipasangkan ke ${gatewayId}.`);
+    await pollConfig();
+    await applyConfig();
+    const bucketMs = 10 * 60 * 1000;
+    const endBucket = historyBucketStart(now()) - bucketMs;
+    const startBucket = endBucket - Math.round(hours * 60) * 60 * 1000;
+    const jobs = [];
+    for (const sensor of enabledSensors()) {
+      if (!activeSensorIds.has(sensor.sensorId)) continue;
+      for (let bucket = startBucket + bucketMs; bucket <= endBucket; bucket += bucketMs) {
+        const timestamp = bucket + Math.floor(Math.random() * (bucketMs - 1000));
+        const reading = adapter.read(sensor, timestamp);
+        if (!reading) continue;
+        const payload = {
+          ...buildTelemetryPayload({ farmId: config.farmId, kumbungId: sensor.kumbungId, sensorId: sensor.sensorId, timestamp, ...reading }),
+          gatewayId,
+          bucketStart: bucket,
+        };
+        jobs.push({ path: `tumbara/history/${sensor.kumbungId}/${jakartaDateKey(timestamp)}/${historyEntryId(sensor.sensorId, timestamp)}`, payload });
+      }
+    }
+    let written = 0;
+    let skipped = 0;
+    for (let index = 0; index < jobs.length; index += concurrency) {
+      await Promise.all(jobs.slice(index, index + concurrency).map(async ({ path, payload }) => {
+        if (await rtdb('GET', path)) { skipped += 1; return; }
+        await rtdb('PUT', path, payload);
+        written += 1;
+      }));
+    }
+    log(`Backfill ${hours} jam: ${written} record ditulis, ${skipped} sudah ada (${activeSensorIds.size} sensor).`);
+    return { written, skipped, sensors: [...activeSensorIds] };
+  }
+
+  async function deniedResult(error) {
+    paired = await isPaired().catch(() => false);
+    if (!paired) return { state: 'unpaired', uid: nvs.uid };
+    log('Akses ditolak: gateway dicabut, inactive, atau assignment tidak cocok. Hubungi owner.');
+    return { state: 'denied', reason: error.message };
+  }
+
+  /**
+   * Satu iterasi loop firmware. Sensor tetap dibaca saat jaringan putus; history disimpan di
+   * outbox dan dikirim ulang (idempoten) setelah tersambung. Mengembalikan ringkasan untuk log/test.
+   */
   async function cycle() {
     if (!nvs?.refreshToken) return { state: 'unprovisioned' };
-    await ensureToken();
-    if (!(await isPaired())) {
-      log(`Menunggu owner memasangkan UID ${nvs.uid} ke ${gatewayId}.`);
-      return { state: 'unpaired', uid: nvs.uid };
-    }
+    let offline = false;
     try {
-      const previousVersion = config?.configVersion;
-      if (!config || now() - lastConfigPollAt >= CONFIG_POLL_MS) await pollConfig();
-      if (config.configVersion !== previousVersion || appliedConfigVersion !== config.configVersion) await applyConfig();
-      if (ackPending || now() - lastHeartbeatAt >= HEARTBEAT_MS) await heartbeat();
-      const uploaded = await sampleAndUpload();
-      return { state: 'online', configVersion: config.configVersion, appliedConfigVersion, uploaded, outbox: outbox.length };
-    } catch (error) {
-      if (error instanceof PermissionDeniedError) {
-        log('Akses ditolak: gateway dicabut, inactive, atau assignment tidak cocok. Hubungi owner.');
-        return { state: 'denied', reason: error.message };
+      await ensureToken();
+      const configDue = !config || now() - lastConfigPollAt >= CONFIG_POLL_MS;
+      if (!paired || configDue) {
+        paired = await isPaired();
+        if (!paired) {
+          log(`Menunggu owner memasangkan UID ${nvs.uid} ke ${gatewayId}.`);
+          return { state: 'unpaired', uid: nvs.uid };
+        }
       }
-      throw error;
+      const previousVersion = config?.configVersion;
+      if (configDue) await pollConfig();
+      if (config.configVersion !== previousVersion || appliedConfigVersion !== config.configVersion) await applyConfig();
+      if (ackPending || now() - lastHeartbeatAt >= HEARTBEAT_MS) {
+        await heartbeat();
+        reportDirty = true; // segarkan lastReadAt di laporan seiring heartbeat
+      }
+    } catch (error) {
+      if (error instanceof NetworkError && config) offline = true;
+      else if (error instanceof PermissionDeniedError) return deniedResult(error);
+      else throw error;
     }
+
+    const readings = config ? readSensors() : [];
+    let uploaded = [];
+    let dropped = 0;
+    if (!offline) {
+      try {
+        uploaded = await uploadLatest(readings);
+        // Semua upload ditolak: periksa apakah gateway masih terpasang (dicabut/dilepas owner).
+        if (readings.length && !uploaded.length) return deniedResult(new PermissionDeniedError('Semua upload latest ditolak Rules'));
+        dropped = await flushOutbox();
+        if (reportDirty) await writeReport();
+      } catch (error) {
+        if (error instanceof NetworkError) offline = true;
+        else if (error instanceof PermissionDeniedError) return deniedResult(error);
+        else throw error;
+      }
+    }
+    if (offline) log(`Jaringan putus; ${outbox.length} record history menunggu di antrean.`);
+    return {
+      state: offline ? 'offline' : 'online',
+      configVersion: config?.configVersion ?? null,
+      appliedConfigVersion,
+      uploaded,
+      dropped,
+      outbox: outbox.length,
+      sensors: sensorStates,
+    };
   }
 
   async function run({ intervalMs = 10000, once = false } = {}) {
@@ -352,9 +508,11 @@ export function createGatewaySimulator({
     cycle,
     run,
     status,
+    backfill,
     reset,
     get uid() { return nvs?.uid ?? null; },
     get outboxSize() { return outbox.length; },
+    get outboxPaths() { return outbox.map(item => item.path); },
   };
 }
 
@@ -391,6 +549,9 @@ async function main() {
     case 'run':
       console.log(JSON.stringify(await simulator.run({ once: Boolean(options.once), intervalMs: Number(options.interval || 10) * 1000 }), null, 2));
       break;
+    case 'backfill':
+      console.log(JSON.stringify(await simulator.backfill({ hours: Number(options.hours || positionalFlags[0] || 48) }), null, 2));
+      break;
     case 'status':
       console.log(JSON.stringify(await simulator.status(), null, 2));
       break;
@@ -398,7 +559,7 @@ async function main() {
       simulator.reset();
       break;
     default:
-      console.log('Perintah: provision | run [--once|once] [--interval detik] | status | reset   (ID: --gateway <ID> atau argumen posisi)');
+      console.log('Perintah: provision | run [--once|once] [--interval detik] | backfill [jam] | status | reset   (ID: --gateway <ID> atau argumen posisi)');
       process.exitCode = 1;
   }
 }

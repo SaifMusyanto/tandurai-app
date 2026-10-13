@@ -81,6 +81,10 @@ tumbara/farmMembers/{farmId}/{uid}/
 tumbara/farmKumbungs/{farmId}/{kumbungId}: true
 tumbara/farmGateways/{farmId}/{gatewayId}: true
 
+tumbara/assignmentLog/{farmId}/{logId}/        # append-only, ditulis owner bersama operasinya
+  action, actorUid, createdAt, sensorId, gatewayId, targetUid,
+  fromKumbungId, toKumbungId, fromGatewayId, toGatewayId, configVersion
+
 tumbara/alerts/{farmId}/{sensorId}_{jenis}/   # jenis: temperature_high | humidity_low | co2_high | device_offline
   farmId, kumbungId, sensorId, sensor, severity, status, message, value, threshold, startedAt, updatedAt, resolvedAt
 
@@ -121,6 +125,15 @@ tumbara/sensors/{sensorId}/
 tumbara/kumbungSensors/{kumbungId}/{sensorId}: true
 tumbara/gatewaySensors/{gatewayId}/{sensorId}: true
 tumbara/gatewayAuthUids/{authUid}: "{gatewayId}"
+
+tumbara/gatewayAcks/{gatewayId}/              # ditulis gateway
+  configVersion: 12
+  reportedAt: 1784091139516
+  sensors/{sensorId}/
+    state: "ok" | "not_found" | "read_error"
+    error: "..."
+    hardwareAddress: "..."
+    lastReadAt: 1784091139516
 
 tumbara/gatewayConfigs/{gatewayId}/
   farmId: "{farmId}"
@@ -311,7 +324,9 @@ Progres: [progres-fase-2-provisioning-gateway.md](./progres-fase-2-provisioning-
 
 **Selesai bila:** gateway staging dapat login sebagai perangkat, hanya membaca config sendiri, mengirim heartbeat, dan gagal menulis setelah akses dicabut.
 
-### Fase 3 — Sinkronisasi konfigurasi dan protokol sensor
+### Fase 3 — Sinkronisasi konfigurasi dan protokol sensor (selesai lokal, 2026-10-13; protokol sensor fisik menunggu hardware)
+
+Progres: [progres-fase-3-sinkronisasi-config.md](./progres-fase-3-sinkronisasi-config.md).
 
 1. Tetapkan `gatewayConfigs/{gatewayId}` sebagai snapshot konfigurasi yang memiliki `configVersion` monoton.
 2. Implementasikan gateway mengambil versi terbaru dan menerapkan perubahan idempoten melalui protokol sensor yang tersedia.
@@ -333,7 +348,9 @@ Progres: [progres-fase-2-provisioning-gateway.md](./progres-fase-2-provisioning-
 
 **Selesai bila:** migrasi idempoten, data lama utuh, semua sensor lama terinventarisasi, dan semua anomali tercatat serta ditangani.
 
-### Fase 5 — UI anggota farm dan perangkat
+### Fase 5 — UI anggota farm dan perangkat (UI selesai lokal, 2026-10-13)
+
+Progres: [progres-ui-konteks-anggota-perangkat.md](./progres-ui-konteks-anggota-perangkat.md).
 
 1. Tambahkan pengelolaan operator farm berdasarkan akun terdaftar, status keanggotaan, dan pencabutan.
 2. Tambahkan daftar/detail gateway beserta status, heartbeat, versi firmware, versi config, dan provisioning/revoke.
@@ -345,7 +362,9 @@ Progres: [progres-fase-2-provisioning-gateway.md](./progres-fase-2-provisioning-
 
 **Selesai bila:** owner dapat menambahkan operator dan menambah sensor ke kumbung serta gateway yang valid; assignment lintas farm ditolak; status UI merefleksikan acknowledgement gateway.
 
-### Fase 6 — Migrasi seluruh pembaca web ke konteks dinamis
+### Fase 6 — Migrasi seluruh pembaca web ke konteks dinamis (halaman telemetry selesai lokal, 2026-10-13; AI/batch/Reports belum)
+
+Progres: [progres-ui-konteks-anggota-perangkat.md](./progres-ui-konteks-anggota-perangkat.md).
 
 1. Bangun pemilih farm/kumbung dari akses pengguna dan indeks kumbung.
 2. Ubah Monitoring agar membaca satu atau beberapa sensor melalui katalog, bukan ID default.

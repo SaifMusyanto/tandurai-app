@@ -15,6 +15,13 @@ Path relatif terhadap `apps/web`. Peran diringkas dari source.
 | `src/pages/AutomationPage.jsx` → default | UI otomasi. |
 | `src/pages/DevicesPage.jsx` → default | Manajemen gateway per farm: status koneksi, tambah, pairing UID, lepas pairing, cabut/aktifkan ulang, panduan pemulihan. |
 | `src/pages/AlertsPage.jsx` → default | Tampilan alert seluruh farm user (per sensor). |
+| `src/contexts/FarmContext.jsx` → `FarmProvider`, `useFarmContext` | Konteks farm/kumbung/sensor dashboard (`target`, setter, role). |
+| `src/lib/farmContext.js` → `resolveSelection`, `readStoredSelection`, `writeStoredSelection` | Logika pemilihan konteks dan penyimpanan per user (murni). |
+| `src/components/ContextBar.jsx` → default | Pemilih farm → kumbung → sensor di atas setiap halaman. |
+| `src/components/KumbungSensorSummary.jsx` → default | Ringkasan per sensor kumbung terpilih di Monitoring. |
+| `src/hooks/useSensorHistory.js` → `useSensorHistory` | History + live sensor terpilih per rentang waktu. |
+| `src/pages/FarmMembersPage.jsx` → default | Anggota farm: daftar, tambah/cabut operator. |
+| `src/components/AssignmentLogPanel.jsx` → default | Riwayat perubahan anggota/perangkat (audit). |
 | `src/components/FarmSensorsPanel.jsx` → default | Daftar dan penugasan sensor per kumbung untuk farm terpilih. |
 | `src/lib/alerts.js` → `evaluateSensor`, `buildAlertRecord`, `alertId` | Evaluasi ambang dan record alert per farm (murni). |
 | `src/lib/alertsService.js` → `subscribeFarmAlerts`, `syncFarmAlert` | Subscribe alert lintas farm dan tulis alert fallback. |

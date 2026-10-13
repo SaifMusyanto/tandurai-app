@@ -1,8 +1,9 @@
-import { get, onValue, ref, update } from 'firebase/database';
+import { get, limitToLast, onValue, orderByChild, query, ref, update } from 'firebase/database';
 import { auth, db } from '../firebase';
 import { FIREBASE_PATHS } from './firebasePaths';
 import {
   buildAddOperatorUpdates,
+  buildAuditEntry,
   buildAssignSensorUpdates,
   buildCreateGatewayUpdates,
   buildDeactivateSensorUpdates,
@@ -13,6 +14,7 @@ import {
   buildRemoveOperatorUpdates,
   buildUnpairGatewayUpdates,
   emailDirectoryKey,
+  sensorAssignmentAction,
 } from './deviceManagementPlan';
 
 // Semua operasi berjalan langsung dari aplikasi owner ke RTDB (tanpa server).
@@ -49,18 +51,20 @@ export async function loadDeviceFarms(uid) {
 
 /**
  * Subscribe gateway milik farm melalui indeks `farmGateways`. `onChange` menerima daftar
- * gateway (dengan `sensorCount`) setiap kali registry atau assignment berubah.
+ * gateway (dengan `sensorCount` dan laporan `ack` per sensor) setiap kali registry, assignment,
+ * atau laporan gateway berubah.
  */
 export function subscribeFarmGateways(farmId, onChange, onError = () => {}) {
   const listeners = new Map();
   const gateways = new Map();
   const sensorCounts = new Map();
+  const acks = new Map();
   let indexLoaded = false;
   const emit = () => {
     if (!indexLoaded) return;
     onChange([...gateways.entries()]
       .filter(([, gateway]) => gateway)
-      .map(([id, gateway]) => ({ ...gateway, id, sensorCount: sensorCounts.get(id) || 0 }))
+      .map(([id, gateway]) => ({ ...gateway, id, sensorCount: sensorCounts.get(id) || 0, ack: acks.get(id) || null }))
       .sort((a, b) => a.id.localeCompare(b.id)));
   };
 
@@ -72,6 +76,7 @@ export function subscribeFarmGateways(farmId, onChange, onError = () => {}) {
       listeners.delete(id);
       gateways.delete(id);
       sensorCounts.delete(id);
+      acks.delete(id);
     }
     for (const id of ids) {
       if (listeners.has(id)) continue;
@@ -84,7 +89,17 @@ export function subscribeFarmGateways(farmId, onChange, onError = () => {}) {
         sensorCounts.set(id, Object.keys(sensorSnapshot.val() || {}).length);
         emit();
       }, onError);
-      listeners.set(id, () => { stopGateway(); stopSensors(); });
+      const stopAck = onValue(ref(db, FIREBASE_PATHS.gatewayAck(id)), ackSnapshot => {
+        acks.set(id, ackSnapshot.val());
+        emit();
+      }, error => {
+        // Laporan ack hanya informasi tambahan; gagal baca (mis. Rules lama) tidak boleh
+        // menggagalkan daftar gateway.
+        console.warn(`Laporan ack ${id} tidak dapat dibaca:`, error.message);
+        acks.set(id, null);
+        emit();
+      });
+      listeners.set(id, () => { stopGateway(); stopSensors(); stopAck(); });
     }
     indexLoaded = true;
     emit();
@@ -189,16 +204,22 @@ export async function addFarmOperator({ farmId, email }) {
   const directory = await readValue(FIREBASE_PATHS.userDirectoryEntry(emailDirectoryKey(email)));
   const operatorUid = directory?.uid;
   const existingMember = operatorUid ? await readValue(FIREBASE_PATHS.farmMember(farmId, operatorUid)) : null;
-  const updates = buildAddOperatorUpdates({ farmId, ownerUid, operatorUid, email, existingMember });
+  const updates = {
+    ...buildAddOperatorUpdates({ farmId, ownerUid, operatorUid, email, existingMember }),
+    ...buildAuditEntry({ farmId, actorUid: ownerUid, action: 'operator_add', details: { targetUid: operatorUid } }),
+  };
   await update(ref(db), updates).catch(error => explainDenied(error, 'Hanya owner farm yang dapat menambahkan operator.'));
   return { uid: operatorUid, role: 'operator', status: 'active' };
 }
 
 export async function removeFarmOperator({ farmId, uid }) {
+  const ownerUid = currentUid();
   const existingMember = await readValue(FIREBASE_PATHS.farmMember(farmId, uid));
   if (!existingMember) return { uid, removed: false };
-  await update(ref(db), buildRemoveOperatorUpdates({ farmId, uid, existingMember }))
-    .catch(error => explainDenied(error, 'Hanya owner farm yang dapat mencabut operator.'));
+  await update(ref(db), {
+    ...buildRemoveOperatorUpdates({ farmId, uid, existingMember }),
+    ...buildAuditEntry({ farmId, actorUid: ownerUid, action: 'operator_remove', details: { targetUid: uid } }),
+  }).catch(error => explainDenied(error, 'Hanya owner farm yang dapat mencabut operator.'));
   return { uid, removed: true };
 }
 
@@ -207,32 +228,56 @@ export async function createGateway({ farmId, gatewayId, name }) {
   const existing = await readValue(FIREBASE_PATHS.gateway(gatewayId))
     .catch(error => explainDenied(error, 'ID gateway sudah digunakan.'));
   if (existing) throw new Error('ID gateway sudah digunakan.');
-  await update(ref(db), buildCreateGatewayUpdates({ farmId, gatewayId, name, ownerUid }))
-    .catch(error => explainDenied(error, 'Gateway tidak dapat dibuat. Pastikan Anda owner farm dan ID belum dipakai.'));
+  await update(ref(db), {
+    ...buildCreateGatewayUpdates({ farmId, gatewayId, name, ownerUid }),
+    ...buildAuditEntry({ farmId, actorUid: ownerUid, action: 'gateway_create', details: { gatewayId } }),
+  }).catch(error => explainDenied(error, 'Gateway tidak dapat dibuat. Pastikan Anda owner farm dan ID belum dipakai.'));
   return { gatewayId, status: 'pending' };
 }
 
+async function readGateway(gatewayId) {
+  const gateway = await readValue(FIREBASE_PATHS.gateway(gatewayId));
+  if (!gateway) throw new Error('Gateway tidak ditemukan.');
+  return gateway;
+}
+
 export async function pairGateway({ gatewayId, authUid }) {
-  await update(ref(db), buildPairGatewayUpdates({ gatewayId, authUid }))
-    .catch(error => explainDenied(error, 'Pairing ditolak. Gateway harus berstatus pending, belum terpasang, dan UID belum dipakai.'));
+  const ownerUid = currentUid();
+  const gateway = await readGateway(gatewayId);
+  await update(ref(db), {
+    ...buildPairGatewayUpdates({ gatewayId, authUid }),
+    ...buildAuditEntry({ farmId: gateway.farmId, actorUid: ownerUid, action: 'gateway_pair', details: { gatewayId, targetUid: authUid } }),
+  }).catch(error => explainDenied(error, 'Pairing ditolak. Gateway harus berstatus pending, belum terpasang, dan UID belum dipakai.'));
   return { gatewayId, authUid };
 }
 
 export async function unpairGateway({ gatewayId }) {
-  const authUid = await readValue(`${FIREBASE_PATHS.gateway(gatewayId)}/authUid`);
-  await update(ref(db), buildUnpairGatewayUpdates({ gatewayId, authUid }));
+  const ownerUid = currentUid();
+  const gateway = await readGateway(gatewayId);
+  await update(ref(db), {
+    ...buildUnpairGatewayUpdates({ gatewayId, authUid: gateway.authUid }),
+    ...buildAuditEntry({ farmId: gateway.farmId, actorUid: ownerUid, action: 'gateway_unpair', details: { gatewayId, targetUid: gateway.authUid } }),
+  });
   return { gatewayId, status: 'pending' };
 }
 
 export async function disableGateway({ gatewayId }) {
   const ownerUid = currentUid();
-  const authUid = await readValue(`${FIREBASE_PATHS.gateway(gatewayId)}/authUid`);
-  await update(ref(db), buildDisableGatewayUpdates({ gatewayId, authUid, ownerUid }));
+  const gateway = await readGateway(gatewayId);
+  await update(ref(db), {
+    ...buildDisableGatewayUpdates({ gatewayId, authUid: gateway.authUid, ownerUid }),
+    ...buildAuditEntry({ farmId: gateway.farmId, actorUid: ownerUid, action: 'gateway_disable', details: { gatewayId, targetUid: gateway.authUid } }),
+  });
   return { gatewayId, status: 'inactive' };
 }
 
 export async function reactivateGateway({ gatewayId }) {
-  await update(ref(db), buildReactivateGatewayUpdates({ gatewayId }));
+  const ownerUid = currentUid();
+  const gateway = await readGateway(gatewayId);
+  await update(ref(db), {
+    ...buildReactivateGatewayUpdates({ gatewayId }),
+    ...buildAuditEntry({ farmId: gateway.farmId, actorUid: ownerUid, action: 'gateway_reactivate', details: { gatewayId } }),
+  });
   return { gatewayId, status: 'pending' };
 }
 
@@ -249,16 +294,59 @@ export async function assignSensor({ farmId, kumbungId, sensorId, gatewayId, nam
     farmId, kumbungId, sensorId, gatewayId, name, hardwareAddress, type,
     ownerUid, currentSensor, configVersions,
   });
-  await update(ref(db), updates)
+  const audit = buildAuditEntry({
+    farmId,
+    actorUid: ownerUid,
+    action: sensorAssignmentAction(currentSensor, { kumbungId, gatewayId }),
+    details: {
+      sensorId,
+      gatewayId,
+      fromKumbungId: currentSensor?.kumbungId,
+      toKumbungId: kumbungId,
+      fromGatewayId: currentSensor?.gatewayId,
+      toGatewayId: gatewayId,
+      configVersion,
+    },
+  });
+  await update(ref(db), { ...updates, ...audit })
     .catch(error => explainDenied(error, 'Penugasan sensor ditolak. Periksa kumbung/gateway pada farm yang sama, lalu coba lagi.'));
   return { farmId, kumbungId, sensorId, gatewayId, configVersion, status: 'pending' };
 }
 
 export async function deactivateSensor({ sensorId }) {
+  const ownerUid = currentUid();
   const currentSensor = await readValue(FIREBASE_PATHS.sensorRecord(sensorId));
   const configVersion = currentSensor?.gatewayId
     ? await readValue(`${FIREBASE_PATHS.gatewayConfig(currentSensor.gatewayId)}/configVersion`)
     : null;
-  await update(ref(db), buildDeactivateSensorUpdates({ currentSensor: { ...currentSensor, id: sensorId }, configVersion }));
+  await update(ref(db), {
+    ...buildDeactivateSensorUpdates({ currentSensor: { ...currentSensor, id: sensorId }, configVersion }),
+    ...buildAuditEntry({
+      farmId: currentSensor.farmId,
+      actorUid: ownerUid,
+      action: 'sensor_deactivate',
+      details: { sensorId, gatewayId: currentSensor.gatewayId, fromKumbungId: currentSensor.kumbungId, configVersion: (Number(configVersion) || 0) + 1 },
+    }),
+  });
   return { sensorId, status: 'inactive' };
+}
+
+/** Riwayat perubahan terbaru farm (append-only), terbaru di depan. */
+export function subscribeAssignmentLog(farmId, onChange, onError = () => {}, limit = 30) {
+  return onValue(
+    query(ref(db, FIREBASE_PATHS.assignmentLog(farmId)), orderByChild('createdAt'), limitToLast(limit)),
+    snapshot => onChange(Object.entries(snapshot.val() || {})
+      .map(([id, entry]) => ({ ...entry, id }))
+      .sort((a, b) => b.createdAt - a.createdAt)),
+    onError,
+  );
+}
+
+/** Anggota farm (`tumbara/farmMembers/{farmId}`), owner dulu lalu email. */
+export function subscribeFarmMembers(farmId, onChange, onError = () => {}) {
+  return onValue(ref(db, FIREBASE_PATHS.farmMembers(farmId)), snapshot => {
+    onChange(Object.entries(snapshot.val() || {})
+      .map(([uid, member]) => ({ ...member, uid }))
+      .sort((a, b) => (a.role === b.role ? String(a.email || a.uid).localeCompare(String(b.email || b.uid)) : a.role === 'owner' ? -1 : 1)));
+  }, onError);
 }

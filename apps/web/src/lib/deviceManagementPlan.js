@@ -26,6 +26,21 @@ export function gatewayConnectionState(gateway, now = Date.now()) {
   return now - lastSeenAt <= GATEWAY_OFFLINE_AFTER_MS ? 'online' : 'offline';
 }
 
+/**
+ * Kesehatan sensor dari laporan ack gateway (`tumbara/gatewayAcks/{gatewayId}`):
+ * `ok`, `not_found`, `read_error`, `stale` (tidak terbaca > batas offline), atau `unknown`
+ * (belum dilaporkan, mis. config baru belum diproses). Sensor nonaktif selalu `inactive`.
+ */
+export function sensorHealth(sensor, ack, now = Date.now()) {
+  if (sensor?.status === 'inactive') return { state: 'inactive' };
+  const entry = ack?.sensors?.[sensor?.id];
+  if (!entry) return { state: 'unknown' };
+  const lastReadAt = Number(entry.lastReadAt) || null;
+  if (entry.state !== 'ok') return { state: entry.state, error: entry.error || null, lastReadAt };
+  if (lastReadAt && now - lastReadAt > GATEWAY_OFFLINE_AFTER_MS) return { state: 'stale', lastReadAt };
+  return { state: lastReadAt ? 'ok' : 'unknown', lastReadAt };
+}
+
 /** Config yang sudah diubah owner tetapi belum diakui gateway. */
 export function gatewayConfigPending(gateway) {
   return Number(gateway?.appliedConfigVersion ?? -1) < Number(gateway?.configVersion ?? 0);
@@ -235,4 +250,33 @@ export function buildDeactivateSensorUpdates({ currentSensor, configVersion, now
   };
   bumpConfig(updates, gatewayId, configVersion, now);
   return updates;
+}
+
+export const AUDIT_ACTIONS = Object.freeze([
+  'operator_add', 'operator_remove',
+  'gateway_create', 'gateway_pair', 'gateway_unpair', 'gateway_disable', 'gateway_reactivate',
+  'sensor_assign', 'sensor_move', 'sensor_update', 'sensor_deactivate',
+]);
+
+const AUDIT_FIELDS = ['sensorId', 'gatewayId', 'targetUid', 'fromKumbungId', 'toKumbungId', 'fromGatewayId', 'toGatewayId', 'configVersion'];
+
+/**
+ * Entri riwayat perubahan (append-only) di `tumbara/assignmentLog/{farmId}/{logId}`.
+ * Digabung ke multipath update operasi yang sama agar log dan perubahan atomik.
+ */
+export function buildAuditEntry({ farmId, actorUid, action, details = {}, now = Date.now(), logId }) {
+  if (!AUDIT_ACTIONS.includes(action)) throw new Error(`Aksi audit tidak dikenal: ${action}`);
+  const id = logId || `${now}_${Math.random().toString(36).slice(2, 8)}`;
+  const entry = { action, actorUid, createdAt: now };
+  for (const field of AUDIT_FIELDS) {
+    if (details[field] !== undefined && details[field] !== null && details[field] !== '') entry[field] = details[field];
+  }
+  return { [P.assignmentLogEntry(farmId, id)]: entry };
+}
+
+/** Jenis aksi penugasan sensor berdasarkan katalog sebelumnya. */
+export function sensorAssignmentAction(currentSensor, { kumbungId, gatewayId }) {
+  if (!currentSensor) return 'sensor_assign';
+  if (currentSensor.kumbungId !== kumbungId || currentSensor.gatewayId !== gatewayId) return 'sensor_move';
+  return currentSensor.status === 'inactive' ? 'sensor_assign' : 'sensor_update';
 }

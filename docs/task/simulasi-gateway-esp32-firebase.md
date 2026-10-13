@@ -170,7 +170,27 @@ Setelah Auth berhasil dan owner menyetujui pemetaan UID, baca `gatewayConfigs/GW
 - Setiap sensor punya `kumbungId`, `enabled`, dan alamat hardware yang valid untuk adapter terpilih.
 - Kumbung seluruh sensor harus berada di farm `FARM-01`.
 
-Untuk simulasi awal, polling konfigurasi setiap 30–60 detik cukup. Ketika versi berubah, simpan versi yang sedang diproses, konfigurasi baru diterapkan idempoten, kemudian PATCH `appliedConfigVersion` setelah seluruh proses berhasil. Jika sebagian sensor gagal, jangan akui versi penuh sebagai berhasil; firmware perlu menyimpan status error lokal sampai ada kontrak acknowledgement per sensor.
+Untuk simulasi awal, polling konfigurasi setiap 30–60 detik cukup. Ketika versi berubah, simpan versi yang sedang diproses, konfigurasi baru diterapkan idempoten, kemudian PATCH `appliedConfigVersion` setelah seluruh proses berhasil. Jika sebagian sensor gagal, jangan akui versi penuh sebagai berhasil; detail kegagalan dilaporkan lewat ack per sensor.
+
+### Langkah 1b — Laporan ack per sensor
+
+Gateway menulis (PUT, mengganti seluruh laporan) `tumbara/gatewayAcks/{gatewayId}` setiap config diterapkan, saat status sensor berubah, dan bersamaan dengan heartbeat:
+
+```json
+{
+  "configVersion": 4,
+  "reportedAt": 1791507600000,
+  "sensors": {
+    "SNS-0101": { "state": "ok", "hardwareAddress": "modbus-rtu:1", "lastReadAt": 1791507590000 },
+    "SNS-0102": { "state": "not_found", "hardwareAddress": "modbus-rtu:2", "error": "Sensor tidak menjawab saat probe" }
+  }
+}
+```
+
+- `state`: `ok`, `not_found` (probe saat menerapkan config gagal), atau `read_error` (pembacaan rutin gagal). `error` maksimal 200 karakter.
+- Hanya sensor yang ada di `gatewayConfigs/{gatewayId}/sensors` dan sedang `enabled`; sensor yang dilepas/dinonaktifkan hilang dari laporan.
+- Rules: hanya gateway pemilik (UID terpasang, tidak `inactive`) yang menulis; `configVersion` laporan tidak boleh melebihi config; dibaca anggota farm dan gateway itu sendiri.
+- UI `/devices` menampilkan jumlah sensor bermasalah per gateway dan kolom **Pembacaan** per sensor (stale bila `lastReadAt` > 3 menit).
 
 ### Langkah 2 — Tandai gateway online
 
@@ -246,6 +266,14 @@ tumbara/history/FARM-01-K01/2026-10-09/SNS-0101_1791507600000
 `RECORD_ID` harus deterministik dan aman untuk path (misalnya gabungan `sensorId` dan timestamp), supaya retry menggunakan key yang sama. Latest boleh ditimpa data yang lebih baru; history append-only.
 
 **Retry idempoten:** Rules mengizinkan gateway membaca satu record history pada kumbung farm-nya bila record belum ada atau milik gateway itu. Sebelum PUT ulang, GET path yang sama; bila sudah ada, lewati. Jangan menganggap HTTP 401 (permission denied pada RTDB REST) berarti record sudah tersimpan. Simulator menerapkan pola ini pada outbox-nya.
+
+### Langkah 6 — Jaringan putus dan perubahan assignment
+
+- Sensor tetap dibaca saat jaringan putus. Setiap pembacaan menambah record history ke outbox (maksimal 500, terlama dibuang) **sebelum** upload; latest tidak dikirim saat offline.
+- Setelah tersambung: kirim latest terbaru, lalu kosongkan outbox dengan pola GET-lalu-PUT (key deterministik `sensorId_bucketStart`), sehingga retry tidak menggandakan history.
+- Record antrean yang **ditolak Rules** (sensor dipindah, dinonaktifkan, atau gateway diganti selama offline) **dibuang**, tidak diulang. Assignment baru hanya berlaku untuk pembacaan berikutnya; riwayat tidak dipindah.
+- Penolakan latest/history memaksa gateway memuat ulang config pada siklus berikutnya. Bila seluruh upload ditolak, gateway memeriksa pairing: UID dilepas → mode menunggu pairing; masih terpasang → status ditolak (hubungi owner).
+- Satu assignment aktif per sensor dijamin oleh katalog `sensors/{id}/gatewayId`: perpindahan gateway mengubah katalog dan kedua config dalam satu multipath update, dan Rules telemetry hanya menerima gateway yang tercatat di katalog.
 
 ## 6. Simulasi satu siklus boot
 
