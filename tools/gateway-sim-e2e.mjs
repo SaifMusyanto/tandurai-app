@@ -11,6 +11,7 @@ import {
   buildDeactivateSensorUpdates,
   buildDisableGatewayUpdates,
   buildPairGatewayUpdates,
+  buildReactivateGatewayUpdates,
 } from '../apps/web/src/lib/deviceManagementPlan.js';
 
 const endpoints = resolveEndpoints();
@@ -76,7 +77,8 @@ try {
     await ownerPatch(owner.token, updates);
     version = configVersion;
   }
-  step(`owner membuat ${GW} (pending) dan 2 sensor; configVersion=${version}`);
+  assert.equal(await adminGet(`tumbara/farmGateways/${FARM}/${GW}`), true);
+  step(`owner membuat ${GW} (pending, terindeks di farmGateways) dan 2 sensor; configVersion=${version}`);
 
   // 3. Provision: Anonymous Auth langsung dari "ESP32".
   const simulator = createGatewaySimulator({ gatewayId: GW, endpoints, stateDir, log: quiet });
@@ -133,6 +135,20 @@ try {
   assert.equal((await adminGet(`tumbara/gateways/${GW}`)).status, 'inactive');
   assert.equal((await adminGet(`tumbara/monitoring/${K1}/SNS-SIM-01`)).timestamp, before);
   step('gateway dicabut: status inactive, mapping UID dihapus, tidak ada write baru');
+
+  // 9. Pemulihan: owner mengaktifkan ulang, ESP32 reset NVS + provision UID baru, owner memasangkan.
+  await ownerPatch(owner.token, buildReactivateGatewayUpdates({ gatewayId: GW }));
+  fresh.reset();
+  const replacement = createGatewaySimulator({ gatewayId: GW, endpoints, stateDir, log: quiet });
+  const newUid = await replacement.provision();
+  assert.notEqual(newUid, uid);
+  await ownerPatch(owner.token, buildPairGatewayUpdates({ gatewayId: GW, authUid: newUid }));
+  const recovered = await replacement.cycle();
+  assert.equal(recovered.state, 'online');
+  assert.deepEqual(recovered.uploaded, ['SNS-SIM-01']);
+  assert.equal((await adminGet(`tumbara/gateways/${GW}`)).authUid, newUid);
+  assert.equal(await adminGet(`tumbara/gatewayAuthUids/${uid}`), null);
+  step('pemulihan: aktifkan ulang → provision UID baru → pairing → online kembali; UID lama tetap tanpa akses');
 
   console.log('\nSemua skenario simulator gateway lulus.');
 } finally {

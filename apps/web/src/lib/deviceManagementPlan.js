@@ -8,6 +8,29 @@ import { FIREBASE_PATHS as P } from './firebasePaths.js';
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,96}$/;
 
+/** Interval heartbeat firmware prototipe; gateway dianggap offline setelah 3 heartbeat terlewat. */
+export const GATEWAY_HEARTBEAT_MS = 60 * 1000;
+export const GATEWAY_OFFLINE_AFTER_MS = 3 * GATEWAY_HEARTBEAT_MS;
+
+/**
+ * Status koneksi untuk UI: `inactive` (dicabut), `pending` (menunggu pairing),
+ * `paired` (UID terpasang, belum pernah heartbeat), `online`, atau `offline`.
+ * Status `online` di database hanya klaim terakhir gateway; kesegaran ditentukan `lastSeenAt`.
+ */
+export function gatewayConnectionState(gateway, now = Date.now()) {
+  if (!gateway) return 'pending';
+  if (gateway.status === 'inactive') return 'inactive';
+  if (!gateway.authUid) return 'pending';
+  const lastSeenAt = Number(gateway.lastSeenAt) || 0;
+  if (!lastSeenAt) return 'paired';
+  return now - lastSeenAt <= GATEWAY_OFFLINE_AFTER_MS ? 'online' : 'offline';
+}
+
+/** Config yang sudah diubah owner tetapi belum diakui gateway. */
+export function gatewayConfigPending(gateway) {
+  return Number(gateway?.appliedConfigVersion ?? -1) < Number(gateway?.configVersion ?? 0);
+}
+
 export function requireId(value, label) {
   if (typeof value !== 'string' || !SAFE_ID.test(value)) {
     throw new Error(`${label} tidak valid.`);
@@ -79,6 +102,7 @@ export function buildCreateGatewayUpdates({ farmId, gatewayId, name, ownerUid, n
       createdAt: now,
       updatedAt: now,
     },
+    [P.farmGateway(farmId, gatewayId)]: true,
     // Ditulis per field: Rules menolak farmId bila config (gateway) sudah ada → ID duplikat gagal.
     [`${config}/farmId`]: farmId,
     [`${config}/configVersion`]: 0,
@@ -118,6 +142,16 @@ export function buildDisableGatewayUpdates({ gatewayId, authUid, ownerUid, now =
   };
   if (authUid) updates[P.gatewayAuthUid(authUid)] = null;
   return updates;
+}
+
+/** Gateway yang dicabut kembali `pending`; perangkat harus provision dan dipasangkan ulang. */
+export function buildReactivateGatewayUpdates({ gatewayId, now = Date.now() }) {
+  return {
+    [`${P.gateway(gatewayId)}/status`]: 'pending',
+    [`${P.gateway(gatewayId)}/disabledBy`]: null,
+    [`${P.gateway(gatewayId)}/disabledAt`]: null,
+    [`${P.gateway(gatewayId)}/updatedAt`]: now,
+  };
 }
 
 function bumpConfig(updates, gatewayId, currentVersion, now) {

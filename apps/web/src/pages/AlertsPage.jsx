@@ -12,8 +12,8 @@ import {
   WifiOff,
   Loader2,
 } from 'lucide-react';
-import { ref, onValue } from 'firebase/database';
-import { db } from '../firebase';
+import { auth, db } from '../firebase';
+import { subscribeFarmAlerts } from '@/lib/alertsService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -62,24 +62,18 @@ export default function AlertsPage() {
   const [severityFilter, setSeverityFilter] = useState('all');
   const [loading, setLoading] = useState(true);
 
+  const uid = auth.currentUser?.uid;
+
   useEffect(() => {
-    const alertsRef = ref(db, 'tumbara/alerts');
-    return onValue(alertsRef, (snapshot) => {
-      const value = snapshot.val() || {};
-      const nextAlerts = Object.entries(value)
-        .map(([id, alert]) => ({ id, ...alert }))
-        .sort((a, b) => {
-          if (a.status === 'active' && b.status !== 'active') return -1;
-          if (a.status !== 'active' && b.status === 'active') return 1;
-          return Number(b.updatedAt || 0) - Number(a.updatedAt || 0);
-        });
+    if (!uid) return undefined;
+    return subscribeFarmAlerts(db, uid, (nextAlerts) => {
       setAlerts(nextAlerts);
       setLoading(false);
     }, () => {
       setAlerts([]);
       setLoading(false);
     });
-  }, []);
+  }, [uid]);
 
   const filteredAlerts = severityFilter === 'all'
     ? alerts
@@ -153,7 +147,7 @@ export default function AlertsPage() {
             ) : filteredAlerts.length === 0 ? (
               <div className="text-center py-12">
                 <Info className="mx-auto text-muted-foreground mb-4" size={48} />
-                <p className="text-muted-foreground">Belum ada data alert dari Cloud Function.</p>
+                <p className="text-muted-foreground">Belum ada alert untuk farm Anda.</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -165,7 +159,7 @@ export default function AlertsPage() {
 
                   return (
                     <motion.div
-                      key={alert.id}
+                      key={`${alert.farmId}/${alert.id}`}
                       initial={{ opacity: 0, x: -20 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ duration: 0.3, delay: index * 0.05 }}
@@ -189,6 +183,9 @@ export default function AlertsPage() {
                         <div className="flex items-center gap-1 text-xs text-muted-foreground">
                           <DeviceIcon size={14} />
                           <span>{alert.device}</span>
+                          {alert.sensorId && (
+                            <span>· {alert.farmId} / {alert.kumbungId} / {alert.sensorId}</span>
+                          )}
                         </div>
                       </div>
                     </motion.div>

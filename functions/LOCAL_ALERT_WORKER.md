@@ -1,6 +1,8 @@
 # Worker Alert Telegram Lokal
 
-Worker ini menggantikan Firebase Cloud Functions untuk notifikasi sensor. Proses berjalan di laptop, memantau `tumbara/monitoring/{kumbungId}/{sensorId}`, menulis status ke `tumbara/alerts`, dan mengirim Telegram ketika threshold terlewati.
+Worker ini menggantikan Firebase Cloud Functions untuk notifikasi sensor. Proses berjalan di laptop, memantau `tumbara/monitoring/{kumbungId}/{sensorId}`, menulis status ke `tumbara/alerts/{farmId}/{sensorId}_{jenis}`, dan mengirim Telegram ketika threshold terlewati.
+
+Alert disimpan **per farm**. `farmId` dibaca dari `tumbara/kumbungs/{DEFAULT_KUMBUNG_ID}/farmId` saat alert pertama ditulis; cooldown Telegram disimpan di `tumbara/notif_cooldown/{farmId}/{sensorId}_{jenis}_{severity}`. Anggota farm dapat membaca alert farm-nya, dan browser anggota menulis alert yang sama sebagai fallback bila worker tidak berjalan. `functions/index.js` (Cloud Functions legacy `sensor1`) belum dimigrasikan dan masih menulis struktur lama.
 
 Tidak diperlukan paket Firebase Blaze. Laptop harus menyala, terhubung internet, dan proses worker harus tetap berjalan.
 

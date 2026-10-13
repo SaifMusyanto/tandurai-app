@@ -11,9 +11,11 @@ import {
   buildDirectoryEntryUpdates,
   buildDisableGatewayUpdates,
   buildPairGatewayUpdates,
+  buildReactivateGatewayUpdates,
   buildRemoveOperatorUpdates,
   buildUnpairGatewayUpdates,
 } from '../apps/web/src/lib/deviceManagementPlan.js';
+import { buildAlertRecord } from '../apps/web/src/lib/alerts.js';
 
 const projectId = 'tandurai-ai';
 let testEnv;
@@ -103,6 +105,7 @@ const seed = () => ({
       'GW-02': gateway('FARM-01', { id: 'GW-02', status: 'pending' }),
       'GW-F2': gateway('FARM-02', { id: 'GW-F2', authUid: 'anonGwF2', createdBy: 'owner2' }),
     },
+    farmGateways: { 'FARM-01': { 'GW-01': true, 'GW-02': true }, 'FARM-02': { 'GW-F2': true } },
     gatewayAuthUids: { anonGw1: 'GW-01', anonGwF2: 'GW-F2' },
     gatewayConfigs: {
       'GW-01': { farmId: 'FARM-01', configVersion: 1, updatedAt: 1, sensors: { 'SNS-0101': { kumbungId: 'FARM-01-K01', enabled: true } } },
@@ -483,4 +486,53 @@ test('owner menonaktifkan sensor; gateway tidak dapat mengaktifkannya kembali', 
   assert.equal(await adminRead('tumbara/gatewayConfigs/GW-01/sensors/SNS-0101/enabled'), false);
   await assertFails(set(ref(gatewayDb(), 'tumbara/sensors/SNS-0101/status'), 'active'));
   await assertFails(set(ref(gatewayDb(), 'tumbara/monitoring/FARM-01-K01/SNS-0101'), telemetry()));
+});
+
+// ---------------------------------------------------------------- Fase 2: indeks gateway & aktivasi ulang
+
+test('indeks farmGateways dibaca anggota farm dan ditulis owner untuk gateway farm-nya', async () => {
+  await assertSucceeds(get(ref(operatorDb(), 'tumbara/farmGateways/FARM-01')));
+  await assertFails(get(ref(outsiderDb(), 'tumbara/farmGateways/FARM-01')));
+  await assertFails(get(ref(operatorDb(), 'tumbara/farmGateways/FARM-02')));
+  await assertFails(set(ref(ownerDb(), 'tumbara/farmGateways/FARM-01/GW-F2'), true));
+  await assertFails(set(ref(operatorDb(), 'tumbara/farmGateways/FARM-01/GW-02'), true));
+  await assertFails(set(ref(ownerDb(), 'tumbara/farmGateways/FARM-01/GW-01'), null));
+  await assertSucceeds(update(ref(ownerDb()), buildCreateGatewayUpdates({ farmId: 'FARM-01', gatewayId: 'GW-IDX', name: 'Index', ownerUid: 'petaniOwner' })));
+  assert.equal(await adminRead('tumbara/farmGateways/FARM-01/GW-IDX'), true);
+});
+
+test('owner mengaktifkan ulang gateway yang dicabut lalu memasangkan UID baru', async () => {
+  await assertSucceeds(update(ref(ownerDb()), buildDisableGatewayUpdates({ gatewayId: 'GW-01', authUid: 'anonGw1', ownerUid: 'petaniOwner' })));
+  await assertFails(update(ref(ownerDb()), buildPairGatewayUpdates({ gatewayId: 'GW-01', authUid: 'anonBaru' })));
+  await assertFails(update(ref(operatorDb()), buildReactivateGatewayUpdates({ gatewayId: 'GW-01' })));
+  await assertSucceeds(update(ref(ownerDb()), buildReactivateGatewayUpdates({ gatewayId: 'GW-01' })));
+  assert.equal(await adminRead('tumbara/gateways/GW-01/status'), 'pending');
+  await assertSucceeds(update(ref(ownerDb()), buildPairGatewayUpdates({ gatewayId: 'GW-01', authUid: 'anonBaru' })));
+  await assertSucceeds(get(ref(gatewayDb('anonBaru'), 'tumbara/gatewayConfigs/GW-01')));
+  await assertFails(get(ref(gatewayDb(), 'tumbara/gatewayConfigs/GW-01')));
+});
+
+// ---------------------------------------------------------------- alert per farm
+
+const alertRecord = (overrides = {}, alert = { key: 'temperature_high', severity: 'warning', value: 31, threshold: 30, message: 'Suhu tinggi' }) =>
+  ({ ...buildAlertRecord({ context: { farmId: 'FARM-01', kumbungId: 'FARM-01-K01', sensorId: 'SNS-0101' }, alert, now: Date.now() }), ...overrides });
+
+test('alert per farm: anggota membaca dan menulis fallback hanya untuk farm-nya', async () => {
+  const path = 'tumbara/alerts/FARM-01/SNS-0101_temperature_high';
+  await assertSucceeds(set(ref(operatorDb(), path), alertRecord()));
+  await assertSucceeds(get(ref(ownerDb(), 'tumbara/alerts/FARM-01')));
+  await assertFails(get(ref(outsiderDb(), 'tumbara/alerts/FARM-01')));
+  await assertFails(get(ref(operatorDb(), 'tumbara/alerts/FARM-02')));
+  await assertFails(get(ref(operatorDb(), 'tumbara/alerts')));
+  await assertFails(set(ref(outsiderDb(), path), alertRecord()));
+  await assertFails(set(ref(operatorDb(), path), null));
+  await assertFails(set(ref(gatewayDb(), path), alertRecord()));
+});
+
+test('alert menolak farm/kumbung tidak cocok, ID tidak sesuai, dan nilai enum asing', async () => {
+  await assertFails(set(ref(operatorDb(), 'tumbara/alerts/FARM-01/SNS-0101_temperature_high'), alertRecord({ kumbungId: 'FARM-02-K01' })));
+  await assertFails(set(ref(operatorDb(), 'tumbara/alerts/FARM-01/SNS-0101_temperature_high'), alertRecord({ farmId: 'FARM-02' })));
+  await assertFails(set(ref(operatorDb(), 'tumbara/alerts/FARM-01/salah'), alertRecord()));
+  await assertFails(set(ref(operatorDb(), 'tumbara/alerts/FARM-01/SNS-0101_temperature_high'), alertRecord({ severity: 'panik' })));
+  await assertFails(set(ref(operatorDb(), 'tumbara/alerts/FARM-01/SNS-0101_temperature_high'), alertRecord({ status: 'dibaca' })));
 });

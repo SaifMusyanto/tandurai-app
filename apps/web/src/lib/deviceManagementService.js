@@ -1,4 +1,4 @@
-import { get, ref, update } from 'firebase/database';
+import { get, onValue, ref, update } from 'firebase/database';
 import { auth, db } from '../firebase';
 import { FIREBASE_PATHS } from './firebasePaths';
 import {
@@ -9,6 +9,7 @@ import {
   buildDirectoryEntryUpdates,
   buildDisableGatewayUpdates,
   buildPairGatewayUpdates,
+  buildReactivateGatewayUpdates,
   buildRemoveOperatorUpdates,
   buildUnpairGatewayUpdates,
   emailDirectoryKey,
@@ -33,6 +34,147 @@ function explainDenied(error, message) {
     throw new Error(message);
   }
   throw error;
+}
+
+/** Farm yang dapat diakses user beserta role (`owner`/`operator`), terurut nama. */
+export async function loadDeviceFarms(uid) {
+  const access = await readValue(`users/${uid}/access`) || {};
+  const farmIds = Object.keys(access.farms || {});
+  const farms = await Promise.all(farmIds.map(async farmId => {
+    const farm = await readValue(FIREBASE_PATHS.farm(farmId)).catch(() => null);
+    return { id: farmId, name: farm?.name || farmId, role: access.farmRoles?.[farmId] || 'operator' };
+  }));
+  return farms.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Subscribe gateway milik farm melalui indeks `farmGateways`. `onChange` menerima daftar
+ * gateway (dengan `sensorCount`) setiap kali registry atau assignment berubah.
+ */
+export function subscribeFarmGateways(farmId, onChange, onError = () => {}) {
+  const listeners = new Map();
+  const gateways = new Map();
+  const sensorCounts = new Map();
+  let indexLoaded = false;
+  const emit = () => {
+    if (!indexLoaded) return;
+    onChange([...gateways.entries()]
+      .filter(([, gateway]) => gateway)
+      .map(([id, gateway]) => ({ ...gateway, id, sensorCount: sensorCounts.get(id) || 0 }))
+      .sort((a, b) => a.id.localeCompare(b.id)));
+  };
+
+  const stopIndex = onValue(ref(db, FIREBASE_PATHS.farmGateways(farmId)), snapshot => {
+    const ids = new Set(Object.keys(snapshot.val() || {}));
+    for (const [id, stop] of listeners) {
+      if (ids.has(id)) continue;
+      stop();
+      listeners.delete(id);
+      gateways.delete(id);
+      sensorCounts.delete(id);
+    }
+    for (const id of ids) {
+      if (listeners.has(id)) continue;
+      gateways.set(id, null);
+      const stopGateway = onValue(ref(db, FIREBASE_PATHS.gateway(id)), gatewaySnapshot => {
+        gateways.set(id, gatewaySnapshot.val());
+        emit();
+      }, onError);
+      const stopSensors = onValue(ref(db, FIREBASE_PATHS.gatewaySensors(id)), sensorSnapshot => {
+        sensorCounts.set(id, Object.keys(sensorSnapshot.val() || {}).length);
+        emit();
+      }, onError);
+      listeners.set(id, () => { stopGateway(); stopSensors(); });
+    }
+    indexLoaded = true;
+    emit();
+  }, onError);
+
+  return () => {
+    stopIndex();
+    for (const stop of listeners.values()) stop();
+    listeners.clear();
+  };
+}
+
+/**
+ * Subscribe kumbung farm beserta sensor terdaftar di tiap kumbung (via `farmKumbungs` →
+ * `kumbungSensors` → `sensors`). `onChange` menerima `{ kumbungs, sensors }`, keduanya terurut ID.
+ */
+export function subscribeFarmSensors(farmId, onChange, onError = () => {}) {
+  const kumbungs = new Map();
+  const kumbungListeners = new Map();
+  const sensorIdsByKumbung = new Map();
+  const sensors = new Map();
+  const sensorListeners = new Map();
+  let indexLoaded = false;
+
+  const emit = () => {
+    if (!indexLoaded) return;
+    onChange({
+      kumbungs: [...kumbungs.entries()]
+        .filter(([, kumbung]) => kumbung)
+        .map(([id, kumbung]) => ({ ...kumbung, id }))
+        .sort((a, b) => a.id.localeCompare(b.id)),
+      sensors: [...sensors.entries()]
+        .filter(([, sensor]) => sensor)
+        .map(([id, sensor]) => ({ ...sensor, id }))
+        .sort((a, b) => a.id.localeCompare(b.id)),
+    });
+  };
+
+  const syncSensorListeners = () => {
+    const wanted = new Set([...sensorIdsByKumbung.values()].flatMap(ids => [...ids]));
+    for (const [id, stop] of sensorListeners) {
+      if (wanted.has(id)) continue;
+      stop();
+      sensorListeners.delete(id);
+      sensors.delete(id);
+    }
+    for (const id of wanted) {
+      if (sensorListeners.has(id)) continue;
+      sensors.set(id, null);
+      sensorListeners.set(id, onValue(ref(db, FIREBASE_PATHS.sensorRecord(id)), snapshot => {
+        sensors.set(id, snapshot.val());
+        emit();
+      }, onError));
+    }
+    emit();
+  };
+
+  const stopIndex = onValue(ref(db, FIREBASE_PATHS.farmKumbungs(farmId)), snapshot => {
+    const ids = new Set(Object.keys(snapshot.val() || {}));
+    for (const [id, stop] of kumbungListeners) {
+      if (ids.has(id)) continue;
+      stop();
+      kumbungListeners.delete(id);
+      kumbungs.delete(id);
+      sensorIdsByKumbung.delete(id);
+    }
+    for (const id of ids) {
+      if (kumbungListeners.has(id)) continue;
+      kumbungs.set(id, null);
+      const stopKumbung = onValue(ref(db, FIREBASE_PATHS.kumbung(id)), kumbungSnapshot => {
+        kumbungs.set(id, kumbungSnapshot.val());
+        emit();
+      }, onError);
+      const stopIndexSensors = onValue(ref(db, FIREBASE_PATHS.kumbungSensors(id)), sensorSnapshot => {
+        sensorIdsByKumbung.set(id, new Set(Object.keys(sensorSnapshot.val() || {})));
+        syncSensorListeners();
+      }, onError);
+      kumbungListeners.set(id, () => { stopKumbung(); stopIndexSensors(); });
+    }
+    indexLoaded = true;
+    syncSensorListeners();
+  }, onError);
+
+  return () => {
+    stopIndex();
+    for (const stop of kumbungListeners.values()) stop();
+    for (const stop of sensorListeners.values()) stop();
+    kumbungListeners.clear();
+    sensorListeners.clear();
+  };
 }
 
 /** Daftarkan email terverifikasi user agar owner dapat menambahkannya sebagai operator. */
@@ -87,6 +229,11 @@ export async function disableGateway({ gatewayId }) {
   const authUid = await readValue(`${FIREBASE_PATHS.gateway(gatewayId)}/authUid`);
   await update(ref(db), buildDisableGatewayUpdates({ gatewayId, authUid, ownerUid }));
   return { gatewayId, status: 'inactive' };
+}
+
+export async function reactivateGateway({ gatewayId }) {
+  await update(ref(db), buildReactivateGatewayUpdates({ gatewayId }));
+  return { gatewayId, status: 'pending' };
 }
 
 export async function assignSensor({ farmId, kumbungId, sensorId, gatewayId, name, hardwareAddress, type }) {

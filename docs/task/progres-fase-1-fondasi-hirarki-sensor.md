@@ -67,7 +67,7 @@ Emulator menampilkan peringatan kredensial Firebase CLI lokal kedaluwarsa; tidak
 
 ## 4. Batasan dan catatan untuk fase berikutnya
 
-- **`tumbara/alerts` tidak memiliki rule** (sudah begitu sejak sebelum Fase 1, termasuk commit terakhir). `TopNavbar` dan `AlertsPage` membaca path ini sehingga ditolak oleh Rules. Perlu keputusan apakah alert global atau per farm sebelum menambahkan rule.
+- ~~`tumbara/alerts` tidak memiliki rule.~~ Diselesaikan di Fase 2: alert per farm (`tumbara/alerts/{farmId}/{sensorId}_{jenis}`).
 - `tools/telemetry-simulator.mjs` login sebagai akun manusia sehingga ditolak Rules gateway-only; gunakan `tools/gateway-simulator.mjs`.
 - Worker/Functions berbasis Admin SDK (`functions/index.js`, `local-alert-worker.js`, `local_ai_worker`) tidak terpengaruh Rules, tetapi masih memakai sensor default/legacy `sensor1` (Fase 6).
 - Gateway belum dapat menandai sensor `maintenance`/error; status sensor tak terbaca terlihat dari telemetry stale. Kontrak acknowledgement per sensor dikerjakan di Fase 3.
@@ -79,7 +79,7 @@ Emulator menampilkan peringatan kredensial Firebase CLI lokal kedaluwarsa; tidak
 
 1. Aktifkan Anonymous Auth pada project Firebase.
 2. Review dengan ekspor RTDB terbaru: semua `gateways`/`sensors` lama harus memenuhi skema baru (tidak ada data katalog pada ekspor yang diaudit di Fase 0).
-3. Putuskan rule `tumbara/alerts` agar halaman alert tidak tetap tertolak.
+3. ~~Putuskan rule `tumbara/alerts`.~~ Selesai di Fase 2 (per farm).
 4. Pastikan tidak ada penulis telemetry manusia yang masih diperlukan.
 5. Deploy ke project demo/staging terlebih dahulu, jalankan simulator gateway terhadap staging, baru production.
 

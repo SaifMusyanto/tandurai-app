@@ -38,7 +38,12 @@ Page → hook/page state → service (opsional) → Firebase SDK → Realtime Da
 - Penambahan operator memakai `userDirectory/{email}` → UID. `App.jsx` memanggil `publishUserDirectoryEntry` setiap login; entri hanya bisa ditulis user sendiri dengan email terverifikasi (`email.toLowerCase()` dengan `.` diganti `,`).
 - Gateway ESP32 login dengan Firebase Anonymous Auth. Owner memasangkan UID ke gateway (`tumbara/gateways/{id}/authUid` + `tumbara/gatewayAuthUids/{uid}`); Rules mengenali gateway dari `auth.uid`, bukan custom claims.
 - Hanya gateway yang menulis `monitoring`/`history`; status sensor `active` hanya diberikan gateway.
-- Belum ada UI untuk operasi ini; `DevicesPage.jsx` masih memakai data statis.
+- `DevicesPage.jsx` (`/devices`): pemilih farm (dari `users/{uid}/access`), daftar gateway via indeks `tumbara/farmGateways/{farmId}` (`subscribeFarmGateways`), status koneksi dari `gatewayConnectionState` (online bila heartbeat ≤ 3 menit), versi config terpasang vs terbaru, jumlah sensor. Owner dapat menambah gateway, memasangkan UID, melepas pairing, mencabut, dan mengaktifkan ulang; operator hanya membaca.
+- `FarmSensorsPanel.jsx` di `/devices`: sensor per kumbung via `subscribeFarmSensors` (`farmKumbungs` → `kumbungSensors` → `sensors`); owner menambah, mengubah penugasan, dan menonaktifkan sensor (`assignSensor`, `deactivateSensor`). UI anggota farm belum ada (Fase 5).
+
+### Alert
+
+Alert disimpan per farm di `tumbara/alerts/{farmId}/{sensorId}_{jenis}`. `AlertsPage` dan `TopNavbar` memakai `subscribeFarmAlerts` (`src/lib/alertsService.js`), yang menggabungkan alert dari semua farm di `users/{uid}/access/farms`. `TopNavbar` juga menulis alert fallback (`syncFarmAlert`) dari telemetry yang dipantau bila payload memiliki `farmId`/`kumbungId`/`sensorId`; evaluasi ambang ada di `src/lib/alerts.js` dan harus sama dengan `functions/alert-core.js`.
 
 ## External Integrations
 

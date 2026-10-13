@@ -79,6 +79,10 @@ tumbara/farmMembers/{farmId}/{uid}/
   updatedAt: 1784091139516
 
 tumbara/farmKumbungs/{farmId}/{kumbungId}: true
+tumbara/farmGateways/{farmId}/{gatewayId}: true
+
+tumbara/alerts/{farmId}/{sensorId}_{jenis}/   # jenis: temperature_high | humidity_low | co2_high | device_offline
+  farmId, kumbungId, sensorId, sensor, severity, status, message, value, threshold, startedAt, updatedAt, resolvedAt
 
 tumbara/kumbungs/{kumbungId}/
   farmId: "{farmId}"
@@ -295,7 +299,9 @@ Migrasi harus idempoten: dapat dijalankan ulang tanpa menggandakan anggota, kata
 
 **Selesai bila:** seluruh skenario akses dan integritas utama lulus emulator; klien web tidak dapat memalsukan telemetry atau mengubah role; gateway hanya mengakses farm dan konfigurasi sendiri.
 
-### Fase 2 — Provisioning gateway
+### Fase 2 — Provisioning gateway (selesai lokal, 2026-10-12; uji staging menunggu deploy)
+
+Progres: [progres-fase-2-provisioning-gateway.md](./progres-fase-2-provisioning-gateway.md).
 
 1. Implementasikan proses pendaftaran gateway dengan ID unik dan status `pending`.
 2. Implementasikan Anonymous Auth langsung di ESP32 serta pairing UID→gateway yang disetujui owner.

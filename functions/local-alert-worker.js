@@ -230,6 +230,17 @@ function createWorker(app, config, telegram) {
   let queue = Promise.resolve();
   let timer = null;
   let stopping = false;
+  let farmId = null; // alert disimpan per farm: tumbara/alerts/{farmId}/{sensorId}_{jenis}
+
+  async function resolveFarmId() {
+    if (farmId) return farmId;
+    const snapshot = await database.ref(`tumbara/kumbungs/${config.kumbungId}/farmId`).once("value");
+    if (typeof snapshot.val() !== "string") {
+      throw new Error(`Kumbung ${config.kumbungId} tidak ditemukan atau tidak memiliki farmId.`);
+    }
+    farmId = snapshot.val();
+    return farmId;
+  }
 
   async function writeWorkerStatus(status, detail = null) {
     await workerRef.set({
@@ -238,6 +249,7 @@ function createWorker(app, config, telegram) {
       hostname: os.hostname(),
       pid: process.pid,
       sensorPath,
+      farmId,
       heartbeatAt: Date.now(),
       schemaVersion: "local-alert-worker-v1",
     });
@@ -245,20 +257,24 @@ function createWorker(app, config, telegram) {
 
   async function updateAlertStates(results, now) {
     if (!results.length) return;
+    const farm = await resolveFarmId();
+    const alertsPath = `tumbara/alerts/${farm}`;
+    const cooldownPath = `tumbara/notif_cooldown/${farm}`;
     const [alertsSnapshot, cooldownSnapshot] = await Promise.all([
-      database.ref("tumbara/alerts").once("value"),
-      database.ref("tumbara/notif_cooldown").once("value"),
+      database.ref(alertsPath).once("value"),
+      database.ref(cooldownPath).once("value"),
     ]);
     const existingAlerts = alertsSnapshot.val() || {};
     const cooldowns = cooldownSnapshot.val() || {};
     const updates = {};
 
     for (const result of results) {
+      const alertId = `${config.sensorId}_${result.key}`;
       const transition = createAlertTransition(
         result,
-        existingAlerts[result.key] || {},
+        existingAlerts[alertId] || {},
         now,
-        cooldowns[`${result.key}_${result.severity}`] || 0,
+        cooldowns[`${config.sensorId}_${result.key}_${result.severity}`] || 0,
         config.cooldownMs,
       );
 
@@ -266,13 +282,20 @@ function createWorker(app, config, telegram) {
         try {
           await sendTelegram(telegramMessage(result, now, telegram.location), telegram);
           transition.record.telegramSentAt = now;
-          updates[`tumbara/notif_cooldown/${transition.cooldownKey}`] = now;
+          updates[`${cooldownPath}/${config.sensorId}_${transition.cooldownKey}`] = now;
           console.log(`[telegram] ${result.key} ${result.severity} terkirim`);
         } catch (error) {
           console.error(`[telegram] ${result.key} gagal: ${error.message}`);
         }
       }
-      updates[`tumbara/alerts/${result.key}`] = transition.record;
+      updates[`${alertsPath}/${alertId}`] = {
+        ...transition.record,
+        id: alertId,
+        farmId: farm,
+        kumbungId: config.kumbungId,
+        sensorId: config.sensorId,
+        source: "local-worker",
+      };
     }
 
     await database.ref().update(updates);

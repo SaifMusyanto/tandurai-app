@@ -282,7 +282,7 @@ Tambahkan variasi kecil dan timestamp nyata dari clock tersinkron. Tes beberapa 
 
 ## 8. Urutan prototyping sebelum hardware dibeli
 
-1. ✅ Simulator komputer: `npm run simulate:gateway -- provision|run|status|reset --gateway GW-01` (Anonymous Auth REST, refresh token, menunggu pairing, read config, heartbeat, telemetry, outbox).
+1. ✅ Simulator komputer: `npm run simulate:gateway provision|run|status|reset GW-01` (Anonymous Auth REST, refresh token, menunggu pairing, read config, heartbeat, telemetry, outbox).
 2. ✅ Emulator: `npm run test:gateway-sim` dan `npm run test:rules`. Ulangi terhadap staging setelah Rules di-deploy ke sana.
 3. Buat versi ESP32 yang hanya menguji Wi-Fi + TLS + Auth + refresh token; belum perlu sensor.
 4. Tambahkan polling config dan acknowledgement versi.

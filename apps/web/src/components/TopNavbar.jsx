@@ -12,80 +12,15 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
-import { ref, onValue, get, set } from 'firebase/database';
+import { ref, get } from 'firebase/database';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { subscribeLatestTelemetry } from '@/lib/telemetryService';
 import { TELEMETRY_STALE_AFTER_MS } from '@/lib/telemetry';
+import { evaluateSensor } from '@/lib/alerts';
+import { subscribeFarmAlerts, syncFarmAlert } from '@/lib/alertsService';
 
 const OFFLINE_AFTER_MS = TELEMETRY_STALE_AFTER_MS;
-
-const ALERT_META = {
-  temperature_high: { type: 'Suhu Tinggi', device: 'Sensor Suhu Kumbung', unit: '°C' },
-  humidity_low: { type: 'Kelembapan Rendah', device: 'Sensor Kelembapan Kumbung', unit: '%' },
-  co2_high: { type: 'CO₂ Tinggi', device: 'Sensor CO₂ Kumbung', unit: 'ppm' },
-  device_offline: { type: 'Perangkat Offline', device: 'ESP32 Sensor Kumbung', unit: 'detik' },
-};
-
-const evaluateSensor = (data) => {
-  const results = [];
-  const toNumber = value => value === null || value === undefined || value === '' ? Number.NaN : Number(value);
-  const temperature = toNumber(data.temperature);
-  const humidity = toNumber(data.humidity);
-  const co2 = toNumber(data.co2);
-
-  if (Number.isFinite(temperature)) {
-    const severity = temperature > 33 ? 'critical' : temperature > 30 ? 'warning' : 'normal';
-    results.push({
-      key: 'temperature_high', severity, value: temperature,
-      threshold: severity === 'critical' ? 33 : 30,
-      message: severity === 'normal' ? `Suhu kembali aman pada ${temperature}°C.` : `Suhu ${temperature}°C melewati batas ${severity === 'critical' ? 'kritis' : 'peringatan'}.`,
-    });
-  }
-  if (Number.isFinite(humidity)) {
-    const severity = humidity < 60 ? 'critical' : humidity < 70 ? 'warning' : 'normal';
-    results.push({
-      key: 'humidity_low', severity, value: humidity,
-      threshold: severity === 'critical' ? 60 : 70,
-      message: severity === 'normal' ? `Kelembapan kembali aman pada ${humidity}%.` : `Kelembapan ${humidity}% berada di bawah batas ${severity === 'critical' ? 'kritis' : 'peringatan'}.`,
-    });
-  }
-  if (Number.isFinite(co2)) {
-    const severity = co2 > 1200 ? 'critical' : co2 > 800 ? 'warning' : 'normal';
-    results.push({
-      key: 'co2_high', severity, value: co2,
-      threshold: severity === 'critical' ? 1200 : 800,
-      message: severity === 'normal' ? `Kadar CO₂ kembali aman pada ${co2} ppm.` : `Kadar CO₂ ${co2} ppm melewati batas ${severity === 'critical' ? 'kritis' : 'peringatan'}.`,
-    });
-  }
-  return results;
-};
-
-const syncAlert = async (alert, now) => {
-  const alertRef = ref(db, `tumbara/alerts/${alert.key}`);
-  const previousSnapshot = await get(alertRef);
-  const previous = previousSnapshot.val() || {};
-  const active = alert.severity !== 'normal';
-  const severityChanged = previous.severity !== alert.severity;
-  const meta = ALERT_META[alert.key];
-
-  await set(alertRef, {
-    id: alert.key,
-    sensor: alert.key,
-    type: meta.type,
-    device: meta.device,
-    unit: meta.unit,
-    severity: alert.severity,
-    status: active ? 'active' : 'resolved',
-    message: alert.message,
-    value: alert.value,
-    threshold: alert.threshold,
-    startedAt: active && (previous.status !== 'active' || severityChanged) ? now : (previous.startedAt || null),
-    updatedAt: now,
-    resolvedAt: !active && previous.status === 'active' ? now : (previous.resolvedAt || null),
-    source: 'client-fallback',
-  });
-};
 
 export default function TopNavbar() {
   const { theme, toggleTheme } = useTheme();
@@ -100,6 +35,7 @@ export default function TopNavbar() {
   const [user, setUser]         = useState(null);
   const [username, setUsername] = useState('');
   const lastSensorUpdateRef = useRef(Date.now());
+  const alertContextRef = useRef(null); // { farmId, kumbungId, sensorId } sensor yang dipantau
   const offlineRecordedRef = useRef(false);
 
   // ── 0. Auth listener + fetch username dari Firebase
@@ -142,6 +78,8 @@ export default function TopNavbar() {
     }
     const now = data.timestamp || Date.now();
     lastSensorUpdateRef.current = now;
+    const context = { farmId: data.farmId, kumbungId: data.kumbungId, sensorId: data.sensorId };
+    alertContextRef.current = context;
     offlineRecordedRef.current = false;
     setIsEspOnline(!data.quality.stale && data.quality.status !== 'invalid');
     setLiveData({ temperature: data.temperature ?? '--', humidity: data.humidity ?? '--' });
@@ -149,22 +87,20 @@ export default function TopNavbar() {
 
     const resolvedDeviceAlert = { key: 'device_offline', severity: 'normal', value: 0, threshold: 30, message: 'Perangkat kembali online dan mengirim data sensor.' };
     Promise.all([
-      ...evaluateSensor(data).map(alert => syncAlert(alert, now)),
-      syncAlert(resolvedDeviceAlert, now),
+      ...evaluateSensor(data).map(alert => syncFarmAlert(db, context, alert, now)),
+      syncFarmAlert(db, context, resolvedDeviceAlert, now),
     ]).catch(error => console.error('Gagal memperbarui alert:', error));
   }), []);
 
-  // ── 3. Alert aktif dari Cloud Function
+  // ── 3. Alert aktif dari seluruh farm user (tumbara/alerts/{farmId})
   useEffect(() => {
-    const alertsRef = ref(db, 'tumbara/alerts');
-    return onValue(alertsRef, (snapshot) => {
-      const alertList = Object.values(snapshot.val() || {})
-        .filter(alert => alert.status === 'active')
-        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
-      setNotificationCount(alertList.length);
-      setNotifications(alertList.slice(0, 3));
-    });
-  }, []);
+    if (!user?.uid) return undefined;
+    return subscribeFarmAlerts(db, user.uid, (alertList) => {
+      const active = alertList.filter(alert => alert.status === 'active');
+      setNotificationCount(active.length);
+      setNotifications(active.slice(0, 3));
+    }, error => console.error('Gagal memuat alert:', error));
+  }, [user?.uid]);
 
   // ── 4. Offline jika sensor tidak berubah selama lebih dari 30 detik
   useEffect(() => {
@@ -176,7 +112,7 @@ export default function TopNavbar() {
       offlineRecordedRef.current = true;
       setIsEspOnline(false);
       setLastSyncText(`Offline ${Math.floor(elapsed / 1000)}s`);
-      syncAlert({
+      syncFarmAlert(db, alertContextRef.current, {
         key: 'device_offline',
         severity: 'critical',
         value: Math.floor(elapsed / 1000),
@@ -255,7 +191,7 @@ export default function TopNavbar() {
               <DropdownMenuLabel>Notifications</DropdownMenuLabel>
               <DropdownMenuSeparator />
               {notifications.length > 0 ? notifications.map((alert) => (
-                <DropdownMenuItem key={alert.id || alert.sensor}>
+                <DropdownMenuItem key={`${alert.farmId}/${alert.id}`}>
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
                       <p className="font-medium">{alert.type}</p>

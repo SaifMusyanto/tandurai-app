@@ -473,6 +473,24 @@
           ".write": "auth != null && $authUid !== auth.uid && !root.child('users').child($authUid).exists() && ((newData.exists() && !data.exists() && (root.child('users').child(auth.uid).child('access').child('farmRoles').child(root.child('tumbara').child('gateways').child(newData.val()).child('farmId').val()).val() === 'owner' && root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('gateways').child(newData.val()).child('farmId').val()).val() === true) && root.child('tumbara').child('gateways').child(newData.val()).child('status').val() === 'pending' && !root.child('tumbara').child('gateways').child(newData.val()).child('authUid').exists() && newData.parent().parent().child('gateways').child(newData.val()).child('authUid').val() === $authUid) || (!newData.exists() && data.exists() && (root.child('users').child(auth.uid).child('access').child('farmRoles').child(root.child('tumbara').child('gateways').child(data.val()).child('farmId').val()).val() === 'owner' && root.child('users').child(auth.uid).child('access').child('farms').child(root.child('tumbara').child('gateways').child(data.val()).child('farmId').val()).val() === true) && newData.parent().parent().child('gateways').child(data.val()).child('authUid').val() !== $authUid))",
           ".validate": "newData.isString()"
         }
+      },
+      "farmGateways": {
+        "$farmId": {
+          ".read": "auth != null && root.child('users').child(auth.uid).child('access').child('farms').child($farmId).val() === true",
+          "$gatewayId": {
+            ".write": "auth != null && newData.exists() && (root.child('users').child(auth.uid).child('access').child('farmRoles').child($farmId).val() === 'owner' && root.child('users').child(auth.uid).child('access').child('farms').child($farmId).val() === true) && newData.parent().parent().parent().child('gateways').child($gatewayId).child('farmId').val() === $farmId",
+            ".validate": "newData.val() === true"
+          }
+        }
+      },
+      "alerts": {
+        "$farmId": {
+          ".read": "auth != null && (auth.token.platformAdmin === true || root.child('users').child(auth.uid).child('access').child('farms').child($farmId).val() === true)",
+          "$alertId": {
+            ".write": "auth != null && newData.exists() && root.child('users').child(auth.uid).child('access').child('farms').child($farmId).val() === true",
+            ".validate": "newData.hasChildren(['farmId', 'kumbungId', 'sensorId', 'sensor', 'severity', 'status', 'updatedAt']) && newData.child('farmId').val() === $farmId && root.child('tumbara').child('kumbungs').child(newData.child('kumbungId').val()).child('farmId').val() === $farmId && newData.child('sensorId').isString() && $alertId === newData.child('sensorId').val() + '_' + newData.child('sensor').val() && (newData.child('sensor').val() === 'temperature_high' || newData.child('sensor').val() === 'humidity_low' || newData.child('sensor').val() === 'co2_high' || newData.child('sensor').val() === 'device_offline') && (newData.child('severity').val() === 'critical' || newData.child('severity').val() === 'warning' || newData.child('severity').val() === 'normal') && (newData.child('status').val() === 'active' || newData.child('status').val() === 'resolved') && newData.child('updatedAt').isNumber() && newData.child('updatedAt').val() <= now + 300000"
+          }
+        }
       }
     },
     "userDirectory": {

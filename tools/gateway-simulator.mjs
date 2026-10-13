@@ -2,6 +2,7 @@
 // Anonymous + RTDB), tanpa Firebase SDK, Admin SDK, service account, atau server.
 // Rancangan: docs/task/simulasi-gateway-esp32-firebase.md
 //
+//   npm run simulate:gateway provision GW-01                     # bentuk posisi, aman di PowerShell
 //   node tools/gateway-simulator.mjs provision --gateway GW-01   # sign up anonim, tampilkan UID untuk pairing
 //   node tools/gateway-simulator.mjs run --gateway GW-01 [--once] [--interval 10]
 //   node tools/gateway-simulator.mjs status --gateway GW-01
@@ -359,8 +360,12 @@ export function createGatewaySimulator({
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
-  const options = { command };
+  const options = { command, positional: [] };
   for (let i = 0; i < rest.length; i += 1) {
+    if (!rest[i].startsWith('--')) {
+      options.positional.push(rest[i]);
+      continue;
+    }
     const key = rest[i].replace(/^--/, '');
     const next = rest[i + 1];
     if (next === undefined || next.startsWith('--')) options[key] = true;
@@ -371,7 +376,10 @@ function parseArgs(argv) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const gatewayId = options.gateway || process.env.GATEWAY_ID;
+  // PowerShell membuang `--` sehingga npm menelan flag `--gateway`; ID boleh diberikan sebagai argumen posisi.
+  const [positionalGateway, ...positionalFlags] = options.positional;
+  const gatewayId = options.gateway || positionalGateway || process.env.GATEWAY_ID;
+  if (positionalFlags.includes('once')) options.once = true;
   const simulator = createGatewaySimulator({
     gatewayId,
     adapter: createMockSensorAdapter({ failing: (options.fail || process.env.SIM_FAIL_SENSORS || '').split(',').filter(Boolean) }),
@@ -390,7 +398,7 @@ async function main() {
       simulator.reset();
       break;
     default:
-      console.log('Perintah: provision | run [--once] [--interval detik] | status | reset   (wajib --gateway <ID>)');
+      console.log('Perintah: provision | run [--once|once] [--interval detik] | status | reset   (ID: --gateway <ID> atau argumen posisi)');
       process.exitCode = 1;
   }
 }

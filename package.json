@@ -15,6 +15,7 @@
     "simulate:gateway": "node tools/gateway-simulator.mjs",
     "test:gateway-sim": "powershell -ExecutionPolicy Bypass -File tools/run-database-rules-tests.ps1 -Only auth,database -Command \"node tools/gateway-sim-e2e.mjs\"",
     "test:operations": "node --test tests/operations.test.mjs",
+    "test:devices": "node --test tests/device-management.test.mjs",
     "test:stage4": "npm run test:telemetry && npm run test:operations && npm run test:rules",
     "test:worker": "local_ai_worker\\.venv\\Scripts\\python.exe -m pytest local_ai_worker\\tests -q",
     "worker:health": "local_ai_worker\\.venv\\Scripts\\python.exe -m worker health",

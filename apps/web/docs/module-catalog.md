@@ -13,8 +13,11 @@ Path relatif terhadap `apps/web`. Peran diringkas dari source.
 | `src/pages/OperationsExperiencePage.jsx` → default | Farm, kumbung, batch dan panen; route `/operations`. |
 | `src/pages/AIForecastPage.jsx` → default | UI forecast AI. |
 | `src/pages/AutomationPage.jsx` → default | UI otomasi. |
-| `src/pages/DevicesPage.jsx` → default | Tampilan perangkat dan modal pengelolaan. |
-| `src/pages/AlertsPage.jsx` → default | Tampilan alert. |
+| `src/pages/DevicesPage.jsx` → default | Manajemen gateway per farm: status koneksi, tambah, pairing UID, lepas pairing, cabut/aktifkan ulang, panduan pemulihan. |
+| `src/pages/AlertsPage.jsx` → default | Tampilan alert seluruh farm user (per sensor). |
+| `src/components/FarmSensorsPanel.jsx` → default | Daftar dan penugasan sensor per kumbung untuk farm terpilih. |
+| `src/lib/alerts.js` → `evaluateSensor`, `buildAlertRecord`, `alertId` | Evaluasi ambang dan record alert per farm (murni). |
+| `src/lib/alertsService.js` → `subscribeFarmAlerts`, `syncFarmAlert` | Subscribe alert lintas farm dan tulis alert fallback. |
 | `src/pages/HistoricalPage.jsx` → default | Data historis dan ekspor. |
 | `src/pages/AnalyticsPage.jsx` → default | Analitik telemetry dan chart. |
 | `src/pages/ReportsPage.jsx` → default | Laporan. |
