@@ -13,7 +13,7 @@
 
 - Page diimpor statis, tanpa lazy loading/Suspense level route; bundle awal berpotensi memuat seluruh page.
 - TypeScript/types statis tidak ditemukan; validasi data bergantung pada helper/runtime.
-- State halaman lokal dan beberapa page mengakses Firebase langsung, sehingga akses data tidak seluruhnya lewat service seragam.
+- Semua data lewat `src/lib/api.js`; dashboard bergantung pada backend `apps/api` (dan broker MQTT untuk IoT). Bila backend mati, halaman menampilkan error/empty state; login tetap lewat Firebase Auth.
 - `SettingsPage` memiliki context bahasa/form lokal, bukan provider global.
 - Fetch cuaca/geocoding/Telegram berjalan dari browser; integrasi Telegram perlu ditinjau bersama pengelolaan token yang diinput UI.
 - Chat hanya tersedia bila `VITE_CHAT_API_URL` disetel; implementasi server proxy tidak ditemukan di app.

@@ -1,0 +1,18 @@
+# Broker MQTT produksi. Backend (apps/api) dan PostgreSQL berjalan di host/server yang sama.
+#   1. touch mosquitto/passwd
+#   2. docker compose run --rm mosquitto mosquitto_passwd -b /mosquitto/config/passwd tandurai-backend <MQTT_PASSWORD>
+#   3. Per perangkat (dari tool pabrik): mosquitto_passwd -b /mosquitto/config/passwd <hwUid> <deviceSecret>
+#   4. docker compose up -d   (setelah ubah passwd: docker compose kill -s HUP mosquitto)
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0.20
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/acl:/mosquitto/config/acl:ro
+      - ./mosquitto/passwd:/mosquitto/config/passwd
+      - mosquitto-data:/mosquitto/data
+volumes:
+  mosquitto-data:

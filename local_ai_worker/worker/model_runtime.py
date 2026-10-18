@@ -283,6 +283,35 @@ class HarvestModelRuntime:
     def batch_model_version(self) -> str:
         return f"batch-yield-{self.batch_sha256['yieldPoint'][:12]}"
 
+    # Nilai "kondisi tidak diketahui" (skor ±0,5) bila belum ada histori sensor yang cukup.
+    NEUTRAL_HISTORY = {
+        "avg_temperature_c": 27.0, "temperature_std_c": 1.4, "temperature_optimal_pct": 50.0,
+        "avg_humidity_pct": 81.0, "humidity_std_pct": 3.0, "humidity_optimal_pct": 50.0,
+        "avg_co2_ppm": 1000.0, "co2_std_ppm": 150.0, "co2_optimal_pct": 50.0,
+        "sensor_completeness_pct": 0.0,
+    }
+
+    # metrik batchHistory → (kolom rata-rata, kolom simpangan baku, kolom % optimal) model batch v3
+    HISTORY_COLUMNS = {
+        "temperature": ("avg_temperature_c", "temperature_std_c", "temperature_optimal_pct"),
+        "humidity": ("avg_humidity_pct", "humidity_std_pct", "humidity_optimal_pct"),
+        "co2": ("avg_co2_ppm", "co2_std_ppm", "co2_optimal_pct"),
+    }
+
+    def batch_history_features(self, feature_payload: dict[str, Any]) -> tuple[dict[str, float], bool]:
+        """Fitur histori kondisi batch (model v3) dari `batchHistory`; nilai netral bila belum cukup."""
+        history = feature_payload.get("batchHistory") or {}
+        if not history.get("sufficient"):
+            return dict(self.NEUTRAL_HISTORY), False
+        values = {}
+        for metric, (mean_col, std_col, optimal_col) in self.HISTORY_COLUMNS.items():
+            item = (history.get("metrics") or {}).get(metric) or {}
+            for column, field in ((mean_col, "mean"), (std_col, "std"), (optimal_col, "optimalPct")):
+                value = item.get(field)
+                values[column] = float(value) if value is not None else self.NEUTRAL_HISTORY[column]
+        values["sensor_completeness_pct"] = float(history.get("completenessPct") or 0.0)
+        return values, True
+
     def predict_batch_total(self, feature_payload: dict[str, Any]) -> dict[str, float]:
         features = feature_payload["features"]
         active = max(0.0, float(features.get("baglog_count_active") or 0))
@@ -297,24 +326,13 @@ class HarvestModelRuntime:
             age = max(0, int(features.get("baglog_age_days") or 0))
             started = datetime.fromisoformat(feature_payload["asOfDate"]) - timedelta(days=age)
         angle = 2 * math.pi * (started.month - 1) / 12
-        completeness = float(
-            feature_payload.get("dataQuality", {}).get("scenarioCompletenessPct")
-            or feature_payload.get("dataQuality", {}).get("completenessPct")
-            or 0
-        )
+        history_values, history_used = self.batch_history_features(feature_payload)
         row_values = {
             "baglog_count_initial": float(initial),
             "baglog_count_active": active,
             "substrate_type": features.get("substrate_type") or "mixed_agri_waste",
-            "avg_temperature_c": float(features.get("temperature_mean_c") or 25.5),
-            "temperature_std_c": float(features.get("temperature_std_c") or 1.5),
-            "avg_humidity_pct": float(features.get("relative_humidity_mean_pct") or 87.5),
-            "humidity_std_pct": float(features.get("relative_humidity_std_pct") or 2.0),
-            "avg_co2_ppm": float(features.get("co2_mean_ppm") or 1050),
-            "co2_high_hours": float(features.get("co2_high_hours_7d") or 0) / 7,
-            "avg_substrate_moisture_pct": float(features.get("substrate_moisture_mean_pct") or 64),
             "contamination_pct": contamination,
-            "sensor_completeness_pct": completeness,
+            **history_values,
             "start_month_sin": math.sin(angle),
             "start_month_cos": math.cos(angle),
         }
@@ -333,6 +351,7 @@ class HarvestModelRuntime:
             "harvestStartDay": start_day,
             "harvestEndDay": end_day,
             "yieldKgPerBaglog": yield_point,
+            "historyUsed": history_used,
         }
     def predict(self, feature_payload: dict[str, Any]) -> tuple[float, dict[float, float]]:
         values = dict(feature_payload["features"])

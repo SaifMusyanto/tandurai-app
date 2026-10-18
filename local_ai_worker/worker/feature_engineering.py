@@ -122,6 +122,59 @@ def _effective_harvest_events(events: list[dict[str, Any]]) -> list[dict[str, An
 
     return [corrections.get(str(event.get("id")), event) for event in originals]
 
+# Rentang optimal fruiting jamur tiram (sama dengan generator data model batch v3 & DEFAULT_OPTIMAL
+# backend). Tetap/baku agar arti fitur sama dengan saat model dilatih.
+OPTIMAL_RANGES = {"temperature": (22.0, 28.0), "humidity": (80.0, 90.0), "co2": (0.0, 1000.0)}
+HISTORY_METRICS = (("temperature", "temperature"), ("humidity", "humidity"), ("co2", "co2"))
+MIN_HISTORY_SAMPLES = 36  # ±6 jam data agar histori dianggap mewakili
+
+
+def build_batch_history(
+    telemetry: list[dict[str, Any]], started_at: Any, end_ms: int,
+) -> dict[str, Any]:
+    """Ringkasan kondisi sepanjang batch (sejak mulai sampai `end_ms`): rata-rata, simpangan baku,
+    dan % waktu di rentang optimal untuk suhu, kelembapan, CO₂ — fitur model batch v3."""
+    start_ms = _timestamp_ms(started_at)
+    rows = [
+        row for row in telemetry
+        if (timestamp := _timestamp_ms(row.get("timestamp"))) is not None
+        and (start_ms is None or timestamp >= start_ms) and timestamp < end_ms
+    ]
+    result: dict[str, Any] = {}
+    for key, field in HISTORY_METRICS:
+        values = [value for row in rows if (value := _number(row.get(field))) is not None]
+        low, high = OPTIMAL_RANGES[key]
+        result[key] = {
+            "mean": _round(_mean(values)), "std": _round(_std(values)),
+            "optimalPct": _round(sum(low <= value <= high for value in values) / len(values) * 100) if values else None,
+            "samples": len(values),
+        }
+    timestamps = sorted({_timestamp_ms(row.get("timestamp")) for row in rows} - {None})
+    span_days = max(1.0, (end_ms - start_ms) / 86_400_000) if start_ms else None
+    # Sampel per 10 menit per sensor; kelengkapan = hari yang punya data / lama batch.
+    days_with_data = len({_local_date(value, ZoneInfo("Asia/Jakarta")) for value in timestamps})
+    samples = min(item["samples"] for item in result.values())
+    score = None
+    if samples:
+        score = round(
+            0.40 * (result["temperature"]["optimalPct"] or 0) / 100
+            + 0.35 * (result["humidity"]["optimalPct"] or 0) / 100
+            + 0.25 * (result["co2"]["optimalPct"] or 0) / 100, 4,
+        )
+    return {
+        "schemaVersion": "batch-history-v1",
+        "startAt": start_ms, "endAt": end_ms,
+        "metrics": result,
+        "samples": samples,
+        "daysWithData": days_with_data,
+        "batchDays": round(span_days, 2) if span_days else None,
+        "completenessPct": round(min(100.0, days_with_data / span_days * 100), 2) if span_days else None,
+        "conditionScore": score,
+        "sufficient": samples >= MIN_HISTORY_SAMPLES,
+        "optimalRanges": {key: list(value) for key, value in OPTIMAL_RANGES.items()},
+    }
+
+
 def build_daily_features(
     *, farm_id: str, kumbung_id: str, as_of_date: str, timezone_name: str,
     telemetry: list[dict[str, Any]], batch: dict[str, Any] | None,
@@ -237,6 +290,7 @@ def build_daily_features(
             "freshnessMinutes": round(max(0, effective_end_ms - latest) / 60000, 2) if latest else None,
             "insufficientReasons": reasons, "isPartialDay": is_partial,
         },
+        "batchHistory": build_batch_history(telemetry, (batch or {}).get("startedAt"), effective_end_ms) if batch else None,
         "sourceWindow": {
             "timezone": timezone_name, "startAt": window_start_ms, "endAtExclusive": effective_end_ms,
             "requestedDayEndAt": window_end_ms, "ignoredFutureTelemetry": ignored_future,

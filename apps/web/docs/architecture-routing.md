@@ -2,7 +2,7 @@
 
 ## Project Summary
 
-Tandurai adalah dashboard pemantauan dan pengelolaan budidaya jamur. Stack dari source/manifest: React 18.3, JavaScript/JSX (TypeScript tidak ditemukan), Vite 7, React Router DOM 7, Tailwind CSS 3, Radix UI/shadcn-style. Pola: SPA, route/page terpusat di `App.jsx`, layout dashboard bersama, state fitur lokal, dan akses Firebase melalui hook/service.
+Tandurai adalah dashboard pemantauan dan pengelolaan budidaya jamur. Stack dari source/manifest: React 18.3, JavaScript/JSX (TypeScript tidak ditemukan), Vite 7, React Router DOM 7, Tailwind CSS 3, Radix UI/shadcn-style. Pola: SPA, route/page terpusat di `App.jsx`, layout dashboard bersama, state fitur lokal, dan akses data backend (`apps/api`) melalui hook/service; Firebase hanya untuk login.
 
 ## Entrypoint dan core flow
 
@@ -10,7 +10,7 @@ Tandurai adalah dashboard pemantauan dan pengelolaan budidaya jamur. Stack dari 
 index.html (#root) → src/main.jsx → src/App.jsx
 → Firebase onAuthStateChanged → AuthPage jika anonim
 → ThemeProvider + BrowserRouter + DashboardLayout → page sesuai path
-→ komponen/hook → service atau Firebase SDK → Firebase Realtime Database
+→ komponen/hook → service → src/lib/api.js → backend apps/api (REST + SSE) → PostgreSQL
 ```
 
 `main.jsx` memasang App dan CSS global. `App.jsx` menunggu status Firebase Auth (`undefined` = loading), menampilkan AuthPage jika tidak login, dan hanya memasang router dashboard setelah user tersedia.
@@ -49,5 +49,5 @@ src/
 │   └── ui/                 # primitives Radix/shadcn-style
 ├── contexts/ThemeContext.jsx
 ├── hooks/                  # forecast, toast, responsive
-└── lib/                    # Firebase paths, services, domain helpers, export
+└── lib/                    # klien API backend, services, domain helpers, export
 ```

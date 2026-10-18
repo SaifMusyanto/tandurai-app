@@ -11,7 +11,8 @@ from typing import Callable
 from zoneinfo import ZoneInfo
 
 from .config import ConfigError, WorkerConfig
-from .firebase_client import FirebaseClient, FirebaseWorkerError
+from .backend_client import create_client
+from .firebase_client import FirebaseWorkerError
 from .feature_engineering import build_daily_features
 from .forecasting import build_forecast
 from .logging_config import configure_logging
@@ -27,7 +28,7 @@ def _print(payload: dict[str, object]) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
 
 
-def command_health(config: WorkerConfig, live: bool, client_factory: Callable = FirebaseClient) -> dict[str, object]:
+def command_health(config: WorkerConfig, live: bool, client_factory: Callable = create_client) -> dict[str, object]:
     errors = config.validate(require_credentials=live)
     result: dict[str, object] = {
         "command": "health",
@@ -51,7 +52,7 @@ def command_health(config: WorkerConfig, live: bool, client_factory: Callable = 
 
 
 def command_read_sensors(
-    config: WorkerConfig, kumbung_id: str, sensor_id: str, client_factory: Callable = FirebaseClient
+    config: WorkerConfig, kumbung_id: str, sensor_id: str, client_factory: Callable = create_client
 ) -> dict[str, object]:
     with client_factory(config) as client:
         telemetry = client.read_sensor(kumbung_id, sensor_id)
@@ -73,6 +74,18 @@ def _date_keys(as_of_date: str, days: int = 14) -> list[str]:
     return [(target - timedelta(days=offset)).isoformat() for offset in range(days - 1, -1, -1)]
 
 
+MAX_HISTORY_DAYS = 120  # batas tanggal per permintaan feature-inputs backend
+
+
+def _batch_history_days(batch: dict | None, as_of_date: str, timezone_name: str) -> int:
+    """Jumlah hari dari tanggal mulai batch sampai `as_of_date` (inklusif, maks 120)."""
+    started = (batch or {}).get("startedAt")
+    if not started:
+        return 0
+    start_date = datetime.fromtimestamp(int(started) / 1000, ZoneInfo(timezone_name)).date()
+    return max(1, min(MAX_HISTORY_DAYS, (date.fromisoformat(as_of_date) - start_date).days + 1))
+
+
 def _select_batch(
     batches: list[dict], as_of_date: str, timezone_name: str, batch_id: str | None = None,
 ) -> dict | None:
@@ -86,13 +99,17 @@ def _select_batch(
 
 def command_build_features(
     config: WorkerConfig, dry_run: bool, kumbung_id: str, as_of_date: str | None = None,
-    client_factory: Callable = FirebaseClient, batch_id: str | None = None,
+    client_factory: Callable = create_client, batch_id: str | None = None,
 ) -> dict[str, object]:
     target_date = as_of_date or _default_feature_date(config)
     date.fromisoformat(target_date)
     with client_factory(config) as client:
         inputs = client.read_feature_inputs(kumbung_id, _date_keys(target_date))
         batch = _select_batch(inputs["batches"], target_date, config.timezone, batch_id)
+        # Model batch memakai histori kondisi sejak batch mulai → ambil telemetry seluruh batch.
+        history_days = _batch_history_days(batch, target_date, config.timezone)
+        if history_days > 14:
+            inputs = client.read_feature_inputs(kumbung_id, _date_keys(target_date, history_days))
         farm_id = (batch or {}).get("farmId") or config.default_farm_id
         payload = build_daily_features(
             farm_id=farm_id, kumbung_id=kumbung_id, as_of_date=target_date,
@@ -112,7 +129,7 @@ def command_run_once(
     config: WorkerConfig, dry_run: bool, kumbung_id: str, sensor_id: str,
     as_of_date: str | None = None, demo_synthetic_fill: bool = False,
     demo_best_case: bool = False, demo_planning: bool = False, batch_id: str | None = None,
-    client_factory: Callable = FirebaseClient, runtime_factory: Callable = HarvestModelRuntime,
+    client_factory: Callable = create_client, runtime_factory: Callable = HarvestModelRuntime,
 ) -> dict[str, object]:
     feature_result = command_build_features(config, True, kumbung_id, as_of_date, client_factory, batch_id)
     raw_feature = feature_result["feature"]
@@ -157,7 +174,7 @@ def command_run_once(
 
 def command_watch(
     config: WorkerConfig, interval_seconds: int = 3, once: bool = False,
-    client_factory: Callable = FirebaseClient, runtime_factory: Callable = HarvestModelRuntime,
+    client_factory: Callable = create_client, runtime_factory: Callable = HarvestModelRuntime,
 ) -> dict[str, object]:
     processed = 0
     failed = 0

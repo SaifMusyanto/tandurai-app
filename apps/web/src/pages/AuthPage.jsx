@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
-import { auth, db } from '../firebase';
+import { auth } from '../firebase';
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
-  signOut
+  sendEmailVerification,
+  signInWithPopup,
+  GoogleAuthProvider,
+  signOut,
+  updateProfile
 } from 'firebase/auth';
-import { ref, set } from 'firebase/database';
+import { api } from '@/lib/api';
 import {
   AlertCircle, CheckCircle2, ArrowLeft, Leaf,
   Thermometer, Droplets, Wind, Zap, Activity, Shield, Wifi
@@ -147,6 +151,22 @@ export default function AuthPage() {
     setError(''); setSuccess('');
   };
 
+  // Akun Google otomatis terverifikasi, jadi bisa langsung diundang sebagai operator.
+  const handleGoogle = async () => {
+    setError(''); setSuccess(''); setLoading(true);
+    try {
+      await signInWithPopup(auth, new GoogleAuthProvider());
+    } catch (err) {
+      if (err.code === 'auth/operation-not-allowed') setError('Login Google belum diaktifkan di Firebase Console (Authentication → Sign-in method).');
+      else if (err.code === 'auth/popup-blocked') setError('Popup diblokir browser. Izinkan popup untuk situs ini lalu coba lagi.');
+      else if (err.code === 'auth/unauthorized-domain') setError('Domain ini belum terdaftar di Firebase Console → Authentication → Settings → Authorized domains.');
+      else if (err.code === 'auth/popup-closed-by-user') setError('Popup login tertutup sebelum selesai. Coba lagi.');
+      else if (err.code !== 'auth/cancelled-popup-request') setError(`Login Google gagal (${err.code || err.message}).`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleAuth = async (e) => {
     e.preventDefault();
     setError(''); setSuccess(''); setLoading(true);
@@ -154,11 +174,16 @@ export default function AuthPage() {
       if (mode === 'register') {
         if (!username.trim()) { setError('Nama lengkap tidak boleh kosong.'); setLoading(false); return; }
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const uid = userCredential.user.uid;
-        await set(ref(db, `users/${uid}/profile`), { username: username.trim(), email, createdAt: Date.now() });
+        // Nama tampilan disimpan di Firebase Auth dan profil backend (backend mencatat user dari token).
+        await updateProfile(userCredential.user, { displayName: username.trim() });
+        await api.updateMe({ username: username.trim() })
+          .catch(err => console.warn('Profil backend belum tersimpan; akan diisi dari nama akun saat login:', err.message));
+        // Email verifikasi dikirim layanan email bawaan Firebase (tanpa SMTP sendiri).
+        await sendEmailVerification(userCredential.user);
+        const registeredEmail = email;
         await signOut(auth);
         switchMode('login');
-        setSuccess('Akun berhasil dibuat! Silakan login.');
+        setSuccess(`Akun dibuat! Kami mengirim link verifikasi ke ${registeredEmail}. Klik link itu (cek juga folder spam), lalu login.`);
       } else if (mode === 'login') {
         await signInWithEmailAndPassword(auth, email, password);
       } else if (mode === 'forgot') {
@@ -205,7 +230,7 @@ export default function AuthPage() {
               <Leaf size={20} className="text-white" />
             </div>
             <div>
-              <span className="text-xl font-black tracking-tight">Tandurai</span>
+              <span className="text-xl font-black tracking-tight">Dashboard Tandurai</span>
               <p className="text-green-200 text-xs">Smart Vertical Farm</p>
             </div>
           </div>
@@ -325,7 +350,7 @@ export default function AuthPage() {
           <div className="w-8 h-8 rounded-lg bg-green-600 flex items-center justify-center">
             <Leaf size={16} className="text-white" />
           </div>
-          <span className="text-xl font-black text-foreground">Tandurai</span>
+          <span className="text-xl font-black text-foreground">Dashboard Tandurai</span>
         </div>
 
         <div className="w-full max-w-sm">
@@ -399,6 +424,18 @@ export default function AuthPage() {
                 : mode === 'register' ? 'Daftar Sekarang'
                 : 'Masuk Dashboard'}
             </Button>
+
+            {mode !== 'forgot' && (
+              <>
+                <div className="flex items-center gap-3 pt-1 text-xs text-muted-foreground">
+                  <span className="h-px flex-1 bg-border" />atau<span className="h-px flex-1 bg-border" />
+                </div>
+                <Button type="button" variant="outline" disabled={loading} onClick={handleGoogle} className="w-full h-11 font-semibold">
+                  <svg viewBox="0 0 24 24" className="mr-2 h-4 w-4" aria-hidden><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.4h6.5a5.6 5.6 0 0 1-2.4 3.6v3h3.9c2.3-2.1 3.5-5.2 3.5-8.7z"/><path fill="#34A853" d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.1 0-5.8-2.1-6.7-5H1.3v3.1A12 12 0 0 0 12 24z"/><path fill="#FBBC05" d="M5.3 14.3a7.2 7.2 0 0 1 0-4.6V6.6H1.3a12 12 0 0 0 0 10.8l4-3.1z"/><path fill="#EA4335" d="M12 4.8c1.8 0 3.3.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.3 6.6l4 3.1c.9-2.9 3.6-4.9 6.7-4.9z"/></svg>
+                  Masuk dengan Google
+                </Button>
+              </>
+            )}
 
             {mode !== 'forgot' && (
               <div className="text-center pt-2 text-sm text-muted-foreground">

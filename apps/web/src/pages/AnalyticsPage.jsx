@@ -7,9 +7,10 @@ import {
   AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
-import { Lightbulb, TrendingUp, Activity, Loader2, Thermometer, Droplets, Wind, Gauge } from 'lucide-react';
+import { Lightbulb, TrendingUp, Activity, Loader2, Thermometer, Droplets, Wind } from 'lucide-react';
 
-import { useSensorHistory } from '@/hooks/useSensorHistory';
+import { useKumbungHistory, useKumbungTelemetry } from '@/hooks/useKumbungTelemetry';
+import { PARAMETERS, latestValues, parameterStatus } from '@/lib/parameters';
 
 // ─── Scoring helpers ──────────────────────────────────────────
 const scoreTempStability = (logs) => {
@@ -92,17 +93,14 @@ const StatBar = ({ label, value, unit, color }) => (
 // ─── Main Page ────────────────────────────────────────────────
 export default function AnalyticsPage() {
   const [timeframe, setTimeframe] = useState('daily');
-  // History sensor terpilih (konteks farm/kumbung) untuk rentang timeframe, terbaru di depan.
-  const { rows, loading } = useSensorHistory({ rangeMs: TIMEFRAME_RANGE[timeframe], maxPoints: 2000 });
+  // History kumbung (semua sensor digabung per waktu) untuk rentang timeframe, terbaru di depan.
+  const { rows, loading } = useKumbungHistory({ rangeMs: TIMEFRAME_RANGE[timeframe], maxPoints: 6000 });
   const logs = useMemo(() => [...rows].reverse().map(row => ({
-    id:          `${row.sensorId}_${row.timestamp}`,
+    id:          String(row.timestamp),
     timestamp:   row.timestamp,
     temperature: row.temperature ?? null,
     humidity:    row.humidity    ?? null,
     co2:         row.co2         ?? null,
-    pressure:    row.pressure    ?? null,
-    sprayStatus: row.mistingStatus ?? false,
-    fanStatus:   row.fanStatus   ?? false,
   })), [rows]);
   const scores = useMemo(() => calcAllScores(logs), [logs]);
 
@@ -118,7 +116,6 @@ export default function AnalyticsPage() {
     temperature: d.temperature,
     humidity:    d.humidity,
     co2:         d.co2,
-    pressure:    d.pressure,
   }));
 
   const bucketSize = Math.max(1, Math.floor(logsAsc.length / 7));
@@ -131,12 +128,13 @@ export default function AnalyticsPage() {
     return { label, stability, efficiency, avgTemp: Math.round(avgTemp * 10) / 10 };
   });
 
-  const latest = logs[0] ?? {};
+  const latest = useMemo(() => latestValues(rows), [rows]);
+  const live = useKumbungTelemetry();
 
   return (
     <>
       <Helmet>
-        <title>Analytics - Tumbara</title>
+        <title>Analitik - Dashboard Tandurai</title>
       </Helmet>
 
       <div className="space-y-6">
@@ -174,13 +172,11 @@ export default function AnalyticsPage() {
         {/* Live sensor quick-stats */}
         {!loading && logs.length > 0 && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {[
-                { label: 'Temperature', value: latest.temperature, unit: '°C',   icon: Thermometer, ok: latest.temperature >= 26 && latest.temperature <= 31 },
-                { label: 'Humidity',    value: latest.humidity,    unit: '%',    icon: Droplets,    ok: latest.humidity >= 70 && latest.humidity <= 85 },
-                { label: 'CO₂',         value: latest.co2,         unit: ' ppm', icon: Wind,        ok: latest.co2 >= 400 && latest.co2 <= 600 },
-                { label: 'Pressure',    value: latest.pressure,    unit: ' hPa', icon: Gauge,       ok: true },
-              ].map(({ label, value, unit, icon: Icon, ok }) => (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {[['temperature', Thermometer], ['humidity', Droplets], ['co2', Wind]].map(([key, Icon]) => ({
+                label: PARAMETERS[key].label, value: latest[key], unit: PARAMETERS[key].unit === 'ppm' ? ' ppm' : PARAMETERS[key].unit,
+                icon: Icon, ok: parameterStatus(key, latest[key]) === 'optimal',
+              })).map(({ label, value, unit, icon: Icon, ok }) => (
                 <Card key={label} className={`border ${ok ? 'border-green-500/20 bg-green-500/5' : 'border-yellow-500/20 bg-yellow-500/5'}`}>
                   <CardContent className="p-4 flex items-center gap-3">
                     <Icon size={20} className={ok ? 'text-green-500' : 'text-yellow-500'} />
@@ -241,10 +237,10 @@ export default function AnalyticsPage() {
               </CardContent>
             </Card>
 
-            {/* CO₂ + Pressure trend */}
+            {/* CO₂ trend */}
             <Card>
               <CardHeader>
-                <CardTitle>CO₂ & Pressure Trends</CardTitle>
+                <CardTitle>CO₂ Trend</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-[250px]">
@@ -259,22 +255,16 @@ export default function AnalyticsPage() {
                       <AreaChart data={trendData}>
                         <defs>
                           <linearGradient id="gradCo2" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%"  stopColor="#f97316" stopOpacity={0.3} />
-                            <stop offset="95%" stopColor="#f97316" stopOpacity={0}   />
-                          </linearGradient>
-                          <linearGradient id="gradPressure" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%"  stopColor="#8b5cf6" stopOpacity={0.3} />
-                            <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}   />
+                            <stop offset="5%"  stopColor={PARAMETERS.co2.color} stopOpacity={0.3} />
+                            <stop offset="95%" stopColor={PARAMETERS.co2.color} stopOpacity={0}   />
                           </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                         <XAxis dataKey="time" stroke="hsl(var(--muted-foreground))" tick={{ fontSize: 11 }} />
-                        <YAxis yAxisId="co2"      stroke="#f97316"  tick={{ fontSize: 11 }} />
-                        <YAxis yAxisId="pressure" orientation="right" stroke="#8b5cf6" tick={{ fontSize: 11 }} />
+                        <YAxis yAxisId="co2"      stroke={PARAMETERS.co2.color}  tick={{ fontSize: 11 }} />
                         <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', color: 'hsl(var(--foreground))' }} />
                         <Legend />
-                        <Area yAxisId="co2"      type="monotone" dataKey="co2"      name="CO₂ (ppm)"      stroke="#f97316" fill="url(#gradCo2)"      strokeWidth={2} dot={false} />
-                        <Area yAxisId="pressure" type="monotone" dataKey="pressure" name="Pressure (hPa)"  stroke="#8b5cf6" fill="url(#gradPressure)" strokeWidth={2} dot={false} />
+                        <Area yAxisId="co2"      type="monotone" dataKey="co2"      name="CO₂ (ppm)"      stroke={PARAMETERS.co2.color} fill="url(#gradCo2)" strokeWidth={2} dot={false} connectNulls />
                       </AreaChart>
                     </ResponsiveContainer>
                   )}
@@ -335,7 +325,7 @@ export default function AnalyticsPage() {
                 </div>
                 <div className="p-3 bg-card rounded-lg border border-border shadow-sm">
                   <p className="text-sm font-medium">Optimal Range Reference</p>
-                  <p className="text-xs text-muted-foreground mt-1">Temp 26–31°C · Humidity 70–85% · CO₂ 400–600 ppm · Pressure monitored.</p>
+                  <p className="text-xs text-muted-foreground mt-1">Temp 26–31°C · Humidity 70–85% · CO₂ 400–600 ppm.</p>
                 </div>
                 {logs.length > 1 && (() => {
                   const a = logs[0], b = logs[1];
@@ -381,9 +371,9 @@ export default function AnalyticsPage() {
               </CardHeader>
               <CardContent className="space-y-3 text-sm">
                 {[
-                  { label: 'Firebase Path',      value: 'monitoring/sensor1',    ok: true },
+                  { label: 'Sumber data',        value: `Backend · ${live.sensorCount} sensor kumbung`, ok: live.sensorCount > 0 },
                   { label: 'Sensor Feed',        value: logs.length > 0 ? 'Connected' : loading ? 'Connecting…' : 'No Data', ok: logs.length > 0 },
-                  { label: 'ESP Status',         value: latest.espStatus ?? '--', ok: latest.espStatus === 'Online' },
+                  { label: 'Status gateway',     value: live.online ? 'Online' : 'Offline', ok: live.online },
                   { label: 'Snapshots Collected',value: `${logs.length}`,        ok: true },
                   { label: 'Last Update',        value: logs.length > 0 ? new Date(logs[0].timestamp).toLocaleTimeString('id-ID') : '--', ok: true },
                 ].map(({ label, value, ok }) => (

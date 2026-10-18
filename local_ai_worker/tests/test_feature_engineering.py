@@ -97,3 +97,23 @@ def test_harvest_correction_replaces_original_without_double_counting():
     ]
     result = build([row("2026-07-15T12:00:00+07:00")], events)
     assert result["features"]["harvest_lag_1d_kg"] == 7
+
+
+def test_batch_history_summarizes_whole_batch_condition():
+    from worker.feature_engineering import build_batch_history
+    start = 1_760_000_000_000
+    rows = []
+    for index in range(144):  # 24 jam, sampel per 10 menit
+        good = index < 108  # 75% waktu optimal
+        rows.append({"timestamp": start + index * 600_000, "temperature": 25.0 if good else 31.0,
+                     "humidity": 85.0 if good else 70.0, "co2": 800 if good else 1600})
+    rows.append({"timestamp": start - 600_000, "temperature": 40, "humidity": 10, "co2": 5000})  # sebelum batch: diabaikan
+    history = build_batch_history(rows, start, start + 86_400_000)
+    assert history["sufficient"] is True
+    assert history["samples"] == 144
+    assert history["metrics"]["temperature"]["optimalPct"] == 75.0
+    assert history["metrics"]["humidity"]["optimalPct"] == 75.0
+    assert history["metrics"]["co2"]["optimalPct"] == 75.0
+    assert history["conditionScore"] == 0.75
+    empty = build_batch_history([], start, start + 86_400_000)
+    assert empty["sufficient"] is False and empty["conditionScore"] is None

@@ -33,3 +33,18 @@ __pycache__/
 
 # Gateway simulator "NVS" (UID + refresh token)
 .gateway-sim/
+
+# Backup tool migrasi (berisi data produksi)
+migration-backups/
+
+# Backend IoT: state simulator, kredensial broker, file perangkat dari tool pabrik
+apps/api/.sim/
+apps/api/deploy/mosquitto/passwd
+*.device.json
+
+# Ekspor Firebase RTDB untuk impor (berisi data pengguna)
+rtdb-export*.json
+
+# Kredensial perangkat dari tool pabrik & firmware
+provisioning/
+firmware/**/secrets.h

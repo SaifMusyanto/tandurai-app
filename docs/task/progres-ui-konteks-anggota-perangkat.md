@@ -21,7 +21,7 @@
 | Fase 6.4 Agregasi multi-sensor | Ringkasan per sensor; tidak ada agregasi kumbung. |
 | Fase 6.6 Batasi listener | Monitoring hanya subscribe sensor di kumbung terpilih; halaman lain hanya sensor terpilih. |
 
-Belum dikerjakan dari Fase 6: AI Forecast/batch dan Reports belum memakai konteks bersama (sudah memilih kumbung sendiri); fallback sensor tunggal belum dihapus (menunggu uji manual nol/satu/banyak sensor).
+Sisa Fase 6: AI Forecast kini sinkron dua arah dengan konteks (2026-10-15). Reports masih template statis tanpa data sensor sehingga belum ada yang perlu dihubungkan. Fallback sensor tunggal belum dihapus (menunggu uji manual nol/satu/banyak sensor).
 
 ## 2. Data dummy
 
@@ -58,3 +58,21 @@ Tampilan belum dicek di browser; build tidak dijalankan.
 1. `npm run deploy:rules:demo` (menambah `assignmentLog`; juga `gatewayAcks` dari Fase 3 bila belum).
 2. Hentikan lalu jalankan ulang simulator dengan kode terbaru; isi data dummy: `npm run simulate:gateway backfill GW-02 72`.
 3. Buka dashboard: pilih farm/kumbung/sensor di bar konteks; cek Monitoring, Historical, Analytics, `/devices`, dan `/farm-members`.
+
+## 6. Penyelesaian kekurangan (2026-10-15)
+
+| Item | Hasil |
+|---|---|
+| Deploy Rules | **Ter-deploy ke `tandurai-ai`** (`gatewayAcks`, `assignmentLog`); sintaks valid. Setelah seluruh suite lulus. |
+| Build produksi | `vite build` lulus (bundle dibuat tanpa error). |
+| Role per farm di Operasional & AI Forecast | **Bug diperbaiki.** Halaman memakai `access.role` lama (`manager`), padahal Rules memakai `farmRoles`. Kini `src/lib/access.js` (`farmRoleOf`, `farmRolesOf`): Operasional — owner mengelola, owner/operator mencatat panen; AI Forecast — owner/operator dapat meminta perhitungan untuk farm kumbung terpilih. |
+| AI Forecast ↔ konteks | Pilihan kumbung sinkron dua arah dengan `ContextBar` (`selectKumbung` pada `FarmContext`); deep link `?kumbung=` tetap didahulukan. |
+| Fase 4 migrasi | `tools/migration-plan.mjs` (murni) + `tools/migrate-hierarchy.mjs`: validasi farm↔kumbung, inventaris sensor dari monitoring/history, indeks `farmGateways`/`kumbungSensors`/`gatewaySensors` yang terverifikasi, `farmMembers` dari `farmRoles` (bukan dari role lama), hapus `access.role` lama, alert datar dan `notif_cooldown` datar. Anomali (sensor tanpa katalog, relasi tidak cocok, akses tanpa role) hanya dilaporkan. `--apply` mewajibkan `--live`, membuat backup per path di `migration-backups/` (diabaikan Git), lalu memverifikasi ulang (idempoten). |
+| Worker alert lokal | Multi-sensor: semua sensor `active` katalog farm (`ALERT_FARM_ID`), realtime terhadap perubahan katalog, offline per sensor, lokasi Telegram menyebut kumbung/sensor. Pemilihan sensor di `functions/sensor-targets.js`. |
+
+Dry-run terhadap ekspor RTDB terakhir: 1 sensor lama (`SNS-0101`, 94 history) belum ada di katalog → tugaskan lewat `/devices`; 8 perubahan direncanakan (owner petani ke `farmMembers`, hapus `role: manager`, 4 alert datar, 2 cooldown datar). **Belum diterapkan ke live**; jalankan `npm run migrate:hierarchy -- --live` untuk melihat rencana terkini lalu `--live --apply` setelah disetujui.
+
+Verifikasi: rules 41/41, simulator gateway 10/10, `test:devices` 11/11, `test:migration` 4/4, `test:alerts` (functions) 11/11, **`test:alert-worker` lulus** (worker nyata pada emulator: 3 sensor aktif dipantau, pending/farm lain diabaikan, alert suhu, normal, dan offline per sensor), telemetry 5/5, operations 4/4, ESLint lulus.
+
+Masih di luar jangkauan tanpa hardware/keputusan: firmware ESP32 nyata, worker AI (Python) yang masih single-sensor, Cloud Functions legacy `sensor1` (digantikan worker lokal), alur membuat farm baru dari aplikasi, dan App Check.
+

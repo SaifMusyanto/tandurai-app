@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   LayoutDashboard,
@@ -13,11 +13,17 @@ import {
   Settings,
   BrainCircuit,
   Users,
+  KeyRound,
   Menu,
   X,
+  Gauge,
+  Building2,
+  UserCog,
+  ArrowLeft,
 } from 'lucide-react';
 
 import LogoTandurai from '../logo-tandurai.png';
+import { useFarmContext } from '@/contexts/FarmContext';
 
 const menuItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -33,9 +39,21 @@ const menuItems = [
   { path: '/settings', label: 'Settings', icon: Settings },
 ];
 
+// Konsol admin Tandurai: pemantauan seluruh sistem (bukan fitur farm).
+const adminItems = [
+  { path: '/admin', label: 'Ringkasan Sistem', icon: Gauge },
+  { path: '/admin/farms', label: 'Farm & Klien', icon: Building2 },
+  { path: '/admin/users', label: 'Pengguna', icon: UserCog },
+  { path: '/admin/devices', label: 'Registrasi Perangkat', icon: KeyRound },
+];
+
 export default function Sidebar() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
+  const { isAdmin, adminConsole, exitFarmView, farm } = useFarmContext();
+  const items = adminConsole ? adminItems : menuItems;
+  const backToConsole = () => { exitFarmView(); setIsOpen(false); navigate('/admin'); };
 
   return (
     <>
@@ -71,8 +89,8 @@ export default function Sidebar() {
             />
 
             <div>
-              <h1 className="text-xl font-bold bg-gradient-to-r from-green-500 to-emerald-600 bg-clip-text text-transparent">
-                Tandurai
+              <h1 className="text-lg font-bold leading-tight bg-gradient-to-r from-green-500 to-emerald-600 bg-clip-text text-transparent">
+                Dashboard Tandurai
               </h1>
 
               <p className="text-xs text-muted-foreground">
@@ -84,8 +102,18 @@ export default function Sidebar() {
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto p-4">
+          {adminConsole && <p className="px-4 pb-2 text-xs font-semibold uppercase tracking-wide text-violet-600">Konsol Admin</p>}
+          {isAdmin && !adminConsole && (
+            <div className="mb-3 space-y-1">
+              <button type="button" onClick={backToConsole}
+                className="flex w-full items-center gap-3 rounded-lg bg-violet-500/10 px-4 py-3 text-left text-sm font-medium text-violet-700 hover:bg-violet-500/20 dark:text-violet-300">
+                <ArrowLeft size={18} />Kembali ke Konsol Admin
+              </button>
+              <p className="px-4 text-xs text-muted-foreground">Melihat farm: <span className="font-medium text-foreground">{farm?.name || '—'}</span></p>
+            </div>
+          )}
           <ul className="space-y-1">
-            {menuItems.map((item) => {
+            {items.map((item) => {
               const Icon = item.icon;
               const isActive = location.pathname === item.path;
 

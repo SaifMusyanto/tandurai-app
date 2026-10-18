@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { useForecastData } from '@/hooks/useForecastData';
+import DataTable from '@/components/DataTable';
 import { forecastViewState, formatForecastDate, formatJakarta, formatKg } from '@/lib/forecast';
 
 const fieldClass = 'h-11 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm sm:min-w-72';
@@ -26,10 +27,30 @@ const confidenceClass = {
 
 const riskLabels = {
   synthetic_demo_input: 'Sebagian data masih berupa contoh',
-  temperature_outside_reference: 'Suhu kurang sesuai untuk pertumbuhan jamur',
-  humidity_outside_reference: 'Kelembapan kurang sesuai untuk pertumbuhan jamur',
-  co2_high: 'CO₂ tinggi',
+  temperature_outside_reference: 'Suhu sering di luar rentang optimal',
+  humidity_outside_reference: 'Kelembapan sering di luar rentang optimal',
+  co2_high: 'CO₂ sering di atas batas optimal',
+  no_sensor_history: 'Belum ada histori sensor; perkiraan memakai kondisi rata-rata',
 };
+
+/** Ringkasan histori kondisi batch yang dipakai model (model v3). */
+function ConditionBasis({ forecast }) {
+  const history = forecast.conditionHistory;
+  const perThousand = forecast.prediction?.kgPer1000ActiveBaglogs;
+  if (!history) return 'Model AI menghitung total panen dan masa panen dari jumlah baglog, kontaminasi, bahan, serta kondisi kumbung.';
+  const pct = value => (value == null ? '—' : `${Math.round(value)}%`);
+  return (
+    <div className="space-y-1">
+      {history.used ? (
+        <p>
+          Dihitung dari histori kondisi {history.daysWithData ?? 0} hari batch ini: suhu di rentang optimal {pct(history.temperatureOptimalPct)} waktu,
+          kelembapan {pct(history.humidityOptimalPct)}, CO₂ {pct(history.co2OptimalPct)}.
+        </p>
+      ) : <p>Belum ada histori sensor yang cukup untuk batch ini, jadi perkiraan memakai kondisi rata-rata. Hasil akan menyesuaikan setelah sensor merekam data.</p>}
+      {perThousand != null && <p>Setara <strong>{Number(perThousand).toLocaleString('id-ID', { maximumFractionDigits: 0 })} kg per 1.000 baglog</strong> aktif (kondisi selalu buruk ±300 kg, selalu optimal ±500 kg).</p>}
+    </div>
+  );
+}
 
 function StateNotice({ state, error, refresh }) {
   if (state === 'loading') {
@@ -94,7 +115,7 @@ export default function AIForecastPage() {
 
   return (
     <>
-      <Helmet><title>Perkiraan Panen — Tandurai</title></Helmet>
+      <Helmet><title>Perkiraan Panen - Dashboard Tandurai</title></Helmet>
       <div className="mx-auto max-w-[1600px] space-y-8 pb-8">
         <div className="flex flex-col gap-5 rounded-2xl border bg-card/70 p-5 shadow-sm backdrop-blur sm:p-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
@@ -134,7 +155,7 @@ export default function AIForecastPage() {
             </div>
 
             <Alert className="border-emerald-500/40 bg-emerald-500/5"><CheckCircle2 className="text-emerald-600" /><AlertTitle>Saran hari ini</AlertTitle><AlertDescription>{sellingAdvice}</AlertDescription></Alert>
-            <Alert><Database /><AlertTitle>Dasar perhitungan</AlertTitle><AlertDescription>{'Model AI mempelajari pola batch latihan untuk menghitung total panen dan masa panen berdasarkan jumlah baglog, kontaminasi, bahan, serta kondisi kumbung.'}</AlertDescription></Alert>
+            <Alert><Database /><AlertTitle>Dasar perhitungan</AlertTitle><AlertDescription><ConditionBasis forecast={forecast} /></AlertDescription></Alert>
 
             <div>
               <Card className="shadow-sm">
@@ -170,7 +191,15 @@ export default function AIForecastPage() {
               <CardHeader className="p-5 pb-4 sm:p-6 sm:pb-4"><CardTitle className="flex items-center gap-2"><History size={18} /> Riwayat perkiraan panen</CardTitle></CardHeader>
               <CardContent>
                 {history.length === 0 ? <p className="text-sm text-muted-foreground">Belum ada perkiraan sebelumnya.</p> : (
-                  <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[720px] text-sm"><thead className="bg-muted/50"><tr className="border-b text-left text-muted-foreground"><th className="px-4 py-3">Tanggal</th><th className="px-4 py-3">Perkiraan panen</th><th className="px-4 py-3">Aman – kondisi baik</th><th className="px-4 py-3">Tingkat kepastian</th></tr></thead><tbody>{history.map(item => <tr key={item.id} className="border-b transition-colors hover:bg-muted/30 last:border-0"><td className="px-4 py-3">{item.asOfDate}</td><td className="px-4 py-3 font-semibold">{formatKg(item.forecastKg)}</td><td className="px-4 py-3">{formatKg(item.p10Kg)} – {formatKg(item.p90Kg)}</td><td className="px-4 py-3">{confidenceLabel[item.confidence] || 'Rendah'}</td></tr>)}</tbody></table></div>
+                  <DataTable
+                    rows={history}
+                    columns={[
+                      { key: 'asOfDate', header: 'Tanggal' },
+                      { key: 'forecastKg', header: 'Perkiraan panen', className: 'font-semibold', cell: item => formatKg(item.forecastKg) },
+                      { key: 'range', hideOnMobile: true, header: 'Aman – kondisi baik', cell: item => `${formatKg(item.p10Kg)} – ${formatKg(item.p90Kg)}` },
+                      { key: 'confidence', hideOnMobile: true, header: 'Tingkat kepastian', cell: item => confidenceLabel[item.confidence] || 'Rendah' },
+                    ]}
+                  />
                 )}
               </CardContent>
             </Card>

@@ -1,12 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet';
 import { Users, UserPlus, UserMinus, Loader2, Info, Crown, User } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { auth } from '../firebase';
 import { useFarmContext } from '@/contexts/FarmContext';
-import { addFarmOperator, removeFarmOperator, subscribeFarmMembers } from '@/lib/deviceManagementService';
+import { useIot } from '@/contexts/IotContext';
+import { api } from '@/lib/api';
 import AssignmentLogPanel from '@/components/AssignmentLogPanel';
+import DataTable from '@/components/DataTable';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -45,7 +47,7 @@ function AddOperatorDialog({ open, farm, onClose }) {
     if (!valid) return;
     setBusy(true);
     try {
-      await addFarmOperator({ farmId: farm.id, email });
+      await api.addMember(farm.id, email.trim());
       toast.success(`${email.trim()} ditambahkan sebagai operator ${farm.name}.`);
       onClose();
     } catch (error) {
@@ -94,7 +96,7 @@ function RemoveOperatorDialog({ member, farm, onClose }) {
     event.preventDefault();
     setBusy(true);
     try {
-      await removeFarmOperator({ farmId: farm.id, uid: member.uid });
+      await api.removeMember(farm.id, member.uid);
       toast.success(`${member.email || member.uid} dicabut dari ${farm.name}.`);
       onClose();
     } catch (error) {
@@ -133,29 +135,37 @@ export default function FarmMembersPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState(null);
   const currentUser = auth.currentUser;
+  const { subscribe } = useIot();
+  const farmId = farm?.id;
+
+  const load = useCallback(async () => {
+    if (!farmId) return;
+    try {
+      setMembers(await api.members(farmId));
+      setError('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [farmId]);
 
   useEffect(() => {
-    if (!farm?.id) return undefined;
     setLoading(true);
     setError('');
-    return subscribeFarmMembers(farm.id, list => {
-      setMembers(list);
-      setLoading(false);
-    }, err => {
-      setError(err.message);
-      setLoading(false);
-    });
-  }, [farm?.id]);
+    load();
+  }, [load]);
 
-  // Owner lama yang di-seed manual mungkin belum tercatat di farmMembers.
-  const selfListed = members.some(member => member.uid === currentUser?.uid);
-  const rows = !selfListed && farm && currentUser
-    ? [{ uid: currentUser.uid, email: currentUser.email, role: farm.role, status: 'active', unlisted: true }, ...members]
-    : members;
+  // Perubahan anggota (oleh owner lain / dialog di halaman ini) datang lewat SSE `changed`.
+  useEffect(() => subscribe('changed', event => {
+    if (event.entity === 'member' && event.farmId === farmId) load();
+  }), [subscribe, load, farmId]);
+
+  const rows = members;
 
   return (
     <>
-      <Helmet><title>Anggota Farm - Tandurai</title></Helmet>
+      <Helmet><title>Anggota Farm - Dashboard Tandurai</title></Helmet>
       <AddOperatorDialog open={addOpen} farm={farm} onClose={() => setAddOpen(false)} />
       <RemoveOperatorDialog member={removeTarget} farm={farm} onClose={() => setRemoveTarget(null)} />
 
@@ -188,51 +198,41 @@ export default function FarmMembersPage() {
             ) : error ? (
               <p className="py-6 text-center text-red-600">Gagal memuat anggota: {error}</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-xs text-muted-foreground border-b">
-                      <th className="py-2 pr-3 font-medium">Akun</th>
-                      <th className="py-2 pr-3 font-medium">Role</th>
-                      <th className="py-2 pr-3 font-medium">Status</th>
-                      <th className="py-2 pr-3 font-medium">Bergabung</th>
-                      {isOwner && <th className="py-2 font-medium text-right">Aksi</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map(member => (
-                      <tr key={member.uid} className="border-b last:border-0">
-                        <td className="py-2 pr-3">
-                          <p className="font-medium flex items-center gap-1.5">
-                            {member.role === 'owner' ? <Crown size={14} className="text-yellow-600" aria-hidden /> : <User size={14} className="text-muted-foreground" aria-hidden />}
-                            {member.email || member.uid}
-                            {member.uid === currentUser?.uid && <span className="text-xs text-muted-foreground">(Anda)</span>}
-                          </p>
-                          {member.unlisted && <p className="text-xs text-yellow-700 dark:text-yellow-400">Belum tercatat di daftar anggota; akses berasal dari role akun.</p>}
-                        </td>
-                        <td className="py-2 pr-3"><Badge variant="outline">{member.role}</Badge></td>
-                        <td className="py-2 pr-3">
-                          <Badge variant="outline" className={member.status === 'active' ? 'bg-green-500/10 text-green-600 border-green-500/20' : 'bg-muted text-muted-foreground'}>
-                            {member.status === 'active' ? 'Aktif' : member.status}
-                          </Badge>
-                        </td>
-                        <td className="py-2 pr-3 text-xs text-muted-foreground">
-                          {member.createdAt ? new Date(member.createdAt).toLocaleDateString('id-ID', { dateStyle: 'medium' }) : '—'}
-                        </td>
-                        {isOwner && (
-                          <td className="py-2 text-right">
-                            {member.role === 'operator' && (
-                              <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-600" onClick={() => setRemoveTarget(member)}>
-                                <UserMinus size={14} className="mr-1" /> Cabut
-                              </Button>
-                            )}
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable
+                rows={rows}
+                rowKey={member => member.uid}
+                emptyText="Belum ada anggota."
+                columns={[
+                  {
+                    key: 'account', header: 'Akun', cell: member => (
+                      <>
+                        <p className="font-medium flex items-center gap-1.5">
+                          {member.role === 'owner' ? <Crown size={14} className="text-yellow-600" aria-hidden /> : <User size={14} className="text-muted-foreground" aria-hidden />}
+                          {member.email || member.uid}
+                          {member.uid === currentUser?.uid && <span className="text-xs text-muted-foreground">(Anda)</span>}
+                        </p>
+                        {member.username && member.email && <p className="text-xs text-muted-foreground">{member.username}</p>}
+                      </>
+                    ),
+                  },
+                  { key: 'role', header: 'Role', cell: member => <Badge variant="outline">{member.role}</Badge> },
+                  {
+                    key: 'status', hideOnMobile: true, header: 'Status', cell: member => (
+                      <Badge variant="outline" className={member.status === 'active' ? 'bg-green-500/10 text-green-600 border-green-500/20' : 'bg-muted text-muted-foreground'}>
+                        {member.status === 'active' ? 'Aktif' : member.status}
+                      </Badge>
+                    ),
+                  },
+                  { key: 'joined', hideOnMobile: true, header: 'Bergabung', className: 'text-xs text-muted-foreground', cell: member => (member.createdAt ? new Date(member.createdAt).toLocaleDateString('id-ID', { dateStyle: 'medium' }) : '—') },
+                  ...(isOwner ? [{
+                    key: 'actions', header: <span className="sr-only">Aksi</span>, className: 'text-right', cell: member => member.role === 'operator' && (
+                      <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-600" onClick={() => setRemoveTarget(member)}>
+                        <UserMinus size={14} className="mr-1" /> Cabut
+                      </Button>
+                    ),
+                  }] : []),
+                ]}
+              />
             )}
           </CardContent>
         </Card>

@@ -12,7 +12,7 @@
     "alerts:test-telegram": "node local-alert-worker.js --test-telegram",
     "alerts:bind-chat": "node local-alert-worker.js --bind-telegram-chat",
     "alerts:validate": "node local-alert-worker.js --validate-config",
-    "test:alerts": "node --test test/alert-core.test.js"
+    "test:alerts": "node --test test/alert-core.test.js test/sensor-targets.test.js"
   },
   "engines": {
     "node": "24"

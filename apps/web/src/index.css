@@ -88,3 +88,11 @@
     text-wrap: balance;
   }
 }
+/* Cetak rekap Operasional Kumbung: hanya #recap-print yang tampil (A4). */
+@media print {
+  body:has(#recap-print) * { visibility: hidden; }
+  body:has(#recap-print) #recap-print,
+  body:has(#recap-print) #recap-print * { visibility: visible; }
+  body:has(#recap-print) #recap-print { position: absolute; inset: 0 auto auto 0; width: 100%; }
+  @page { size: A4; margin: 12mm; }
+}

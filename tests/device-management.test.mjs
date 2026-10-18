@@ -126,3 +126,14 @@ test('entri audit hanya membawa field yang diisi dan menolak aksi asing', () => 
   assert.equal(sensorAssignmentAction({ kumbungId: 'K1', gatewayId: 'G1', status: 'active' }, { kumbungId: 'K1', gatewayId: 'G1' }), 'sensor_update');
   assert.equal(sensorAssignmentAction({ kumbungId: 'K1', gatewayId: 'G1', status: 'inactive' }, { kumbungId: 'K1', gatewayId: 'G1' }), 'sensor_assign');
 });
+
+test('role per farm hanya dari farmRoles, bukan role global lama', async () => {
+  const { farmRoleOf, farmRolesOf } = await import('../apps/web/src/lib/access.js');
+  const access = { farms: { F1: true, F2: true, F3: false }, farmRoles: { F1: 'owner', F3: 'owner', F4: 'operator' }, role: 'manager' };
+  assert.equal(farmRoleOf(access, 'F1'), 'owner');
+  assert.equal(farmRoleOf(access, 'F2'), null);
+  assert.equal(farmRoleOf(access, 'F3'), null);
+  assert.equal(farmRoleOf(access, 'F4'), null);
+  assert.equal(farmRoleOf(undefined, 'F1'), null);
+  assert.deepEqual(farmRolesOf(access), { F1: 'owner' });
+});

@@ -337,7 +337,9 @@ Progres: [progres-fase-3-sinkronisasi-config.md](./progres-fase-3-sinkronisasi-c
 
 **Selesai bila:** gateway staging berhasil memuat sekurangnya dua sensor dalam dua kumbung di farm yang sama, menerapkan config baru, mengakui hasil, dan pulih setelah koneksi putus.
 
-### Fase 4 — Migrasi katalog dan backfill awal
+### Fase 4 — Migrasi katalog dan backfill awal (tool selesai, 2026-10-15; penerapan live menunggu persetujuan)
+
+Tool: `npm run migrate:hierarchy -- --export <ekspor.json>` (dry-run), `--live` (dry-run baca live), `--live --apply` (backup lalu terapkan). Rincian: [progres-ui-konteks-anggota-perangkat.md](./progres-ui-konteks-anggota-perangkat.md) bagian 6.
 
 1. Buat tool/script migrasi yang membaca ekspor/RTDB dan menghasilkan rencana perubahan kering (dry run).
 2. Validasi relasi farm-kumbung dari `farmKumbungs` dan `kumbungs.farmId`; tampilkan mismatch tanpa memperbaikinya diam-diam.
@@ -433,5 +435,6 @@ Pertanyaan berikut tidak mengubah keputusan domain, tetapi perlu dijawab saat Fa
 - `apps/web/src/lib/deviceManagementPlan.js` dan `deviceManagementService.js`: undangan operator, pemetaan UID gateway, dan assignment multipath langsung dari aplikasi owner (tanpa Functions). Audit trail assignment masih Fase 5.
 - Source firmware/bridge gateway untuk autentikasi, sync config, protokol sensor, telemetry, antrean offline, dan acknowledgement.
 - Simulasi konfigurasi dan alur firmware ESP32: [simulasi-gateway-esp32-firebase.md](./simulasi-gateway-esp32-firebase.md).
+- Rencana integrasi IoT gateway (analisis goal, desain pairing/command/mode, tahap I1–I8): [rencana-integrasi-iot-gateway.md](./rencana-integrasi-iot-gateway.md); panduan instalasi & kontrak API firmware: [../PANDUAN_INTEGRASI_HARDWARE.md](../PANDUAN_INTEGRASI_HARDWARE.md).
 
 Daftar ini indikatif; source aktual perlu diaudit sebelum backlog ditetapkan. Ikuti `jamur/apps/web/AGENTS.md` dan `SYSTEM_MAP.md` ketika perubahan implementasi dimulai, lalu sinkronkan dokumentasi arsitektur yang terpengaruh.

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search, Sun, Moon, Bell, User, CloudRain, Wifi, WifiOff, LogOut } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext.jsx';
 import { Button } from '@/components/ui/button';
@@ -12,58 +12,24 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
-import { ref, get } from 'firebase/database';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { db, auth } from '../firebase';
-import { subscribeLatestTelemetry } from '@/lib/telemetryService';
-import { TELEMETRY_STALE_AFTER_MS } from '@/lib/telemetry';
-import { evaluateSensor } from '@/lib/alerts';
+import { auth } from '../firebase';
 import { useFarmContext } from '@/contexts/FarmContext';
-import { subscribeFarmAlerts, syncFarmAlert } from '@/lib/alertsService';
-
-const OFFLINE_AFTER_MS = TELEMETRY_STALE_AFTER_MS;
+import { useKumbungTelemetry } from '@/hooks/useKumbungTelemetry';
+import { useAlerts } from '@/hooks/useAlerts';
+import { ActiveActuatorsBadge } from '@/components/iot/ActiveActuators';
+import { FarmSwitcher } from '@/components/ContextBar';
 
 export default function TopNavbar() {
   const { theme, toggleTheme } = useTheme();
   const [currentTime, setCurrentTime]   = useState(new Date());
-  const [notificationCount, setNotificationCount] = useState(0);
-  const [notifications, setNotifications] = useState([]);
-  const [liveData, setLiveData]         = useState({ temperature: '--', humidity: '--' });
-  const [isEspOnline, setIsEspOnline]   = useState(false);
-  const [lastSyncText, setLastSyncText] = useState('Never synced');
 
-  // Auth & user profile
-  const [user, setUser]         = useState(null);
-  const [username, setUsername] = useState('');
-  const lastSensorUpdateRef = useRef(Date.now());
-  const alertContextRef = useRef(null); // { farmId, kumbungId, sensorId } sensor yang dipantau
-  const offlineRecordedRef = useRef(false);
+  // Auth & profil user (backend)
+  const [user, setUser] = useState(auth.currentUser);
+  const { profile, adminConsole } = useFarmContext();
+  const username = profile?.username || user?.email?.split('@')[0] || '';
 
-  // ── 0. Auth listener + fetch username dari Firebase
-  useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        try {
-          const profileRef = ref(db, `users/${currentUser.uid}/profile`);
-          const snapshot = await get(profileRef);
-          if (snapshot.exists()) {
-            setUsername(snapshot.val().username || 'Manager');
-          } else {
-            // Fallback ke bagian depan email jika profil belum tersimpan
-            const emailName = currentUser.email?.split('@')[0] || 'Manager';
-            setUsername(emailName);
-          }
-        } catch (err) {
-          console.error('Gagal ambil username navbar:', err);
-          setUsername('Manager');
-        }
-      } else {
-        setUsername('');
-      }
-    });
-    return () => unsubscribeAuth();
-  }, []);
+  useEffect(() => onAuthStateChanged(auth, setUser), []);
 
   // ── 1. Jam Digital
   useEffect(() => {
@@ -71,65 +37,19 @@ export default function TopNavbar() {
     return () => clearInterval(timer);
   }, []);
 
-  // ── 2. Live telemetry sensor terpilih di konteks farm/kumbung
-  const { target } = useFarmContext();
-  const { kumbungId: targetKumbungId, sensorId: targetSensorId } = target;
-  useEffect(() => subscribeLatestTelemetry(db, data => {
-    if (!data) {
-      setIsEspOnline(false);
-      setLiveData({ temperature: '--', humidity: '--' });
-      setLastSyncText(targetSensorId ? 'Belum ada data' : 'Belum ada sensor');
-      alertContextRef.current = null; // jangan tulis alert offline untuk sensor tanpa data
-      offlineRecordedRef.current = true;
-      return;
-    }
-    const now = data.timestamp || Date.now();
-    lastSensorUpdateRef.current = now;
-    const context = { farmId: data.farmId, kumbungId: data.kumbungId, sensorId: data.sensorId };
-    alertContextRef.current = context;
-    offlineRecordedRef.current = false;
-    setIsEspOnline(!data.quality.stale && data.quality.status !== 'invalid');
-    setLiveData({ temperature: data.temperature ?? '--', humidity: data.humidity ?? '--' });
-    setLastSyncText(`Synced ${new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`);
+  // ── 2. Kondisi kumbung terpilih (gabungan semua sensor, SSE backend).
+  const telemetry = useKumbungTelemetry();
+  const isEspOnline = telemetry.online;
+  const liveData = { temperature: telemetry.values.temperature ?? '--', humidity: telemetry.values.humidity ?? '--' };
+  const lastSyncText = telemetry.timestamp
+    ? `${isEspOnline ? 'Synced' : 'Terakhir'} ${new Date(telemetry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
+    : telemetry.sensorCount ? 'Belum ada data' : 'Belum ada sensor';
 
-    const resolvedDeviceAlert = { key: 'device_offline', severity: 'normal', value: 0, threshold: 30, message: 'Perangkat kembali online dan mengirim data sensor.' };
-    Promise.all([
-      ...evaluateSensor(data).map(alert => syncFarmAlert(db, context, alert, now)),
-      syncFarmAlert(db, context, resolvedDeviceAlert, now),
-    ]).catch(error => console.error('Gagal memperbarui alert:', error));
-  }, undefined, { kumbungId: targetKumbungId, sensorId: targetSensorId }), [targetKumbungId, targetSensorId]);
-
-  // ── 3. Alert aktif dari seluruh farm user (tumbara/alerts/{farmId})
-  useEffect(() => {
-    if (!user?.uid) return undefined;
-    return subscribeFarmAlerts(db, user.uid, (alertList) => {
-      const active = alertList.filter(alert => alert.status === 'active');
-      setNotificationCount(active.length);
-      setNotifications(active.slice(0, 3));
-    }, error => console.error('Gagal memuat alert:', error));
-  }, [user?.uid]);
-
-  // ── 4. Offline jika sensor tidak berubah selama lebih dari 30 detik
-  useEffect(() => {
-    const checkInterval = setInterval(() => {
-      const now = Date.now();
-      const elapsed = now - lastSensorUpdateRef.current;
-      if (elapsed <= OFFLINE_AFTER_MS || offlineRecordedRef.current) return;
-
-      offlineRecordedRef.current = true;
-      setIsEspOnline(false);
-      setLastSyncText(`Offline ${Math.floor(elapsed / 1000)}s`);
-      syncFarmAlert(db, alertContextRef.current, {
-        key: 'device_offline',
-        severity: 'critical',
-        value: Math.floor(elapsed / 1000),
-        threshold: 30,
-        message: `ESP32 tidak mengirim pembaruan selama ${Math.floor(elapsed / 1000)} detik.`,
-      }, now).catch(error => console.error('Gagal menyimpan alert offline:', error));
-    }, 5000);
-
-    return () => clearInterval(checkInterval);
-  }, []);
+  // ── 3. Alert aktif seluruh farm (dievaluasi backend, realtime lewat SSE)
+  const { alerts } = useAlerts();
+  const activeAlerts = alerts.filter(alert => alert.status === 'active');
+  const notificationCount = activeAlerts.length;
+  const notifications = activeAlerts.slice(0, 3);
 
   const handleSignOut = async () => {
     try {
@@ -144,8 +64,9 @@ export default function TopNavbar() {
     <header className="sticky top-0 z-30 bg-card border-b border-border backdrop-blur-sm bg-card/95">
       <div className="flex items-center justify-between px-4 lg:px-6 h-16 gap-4">
 
-        {/* ── Bagian Kiri — Pencarian ── */}
-        <div className="flex-1 max-w-md">
+        {/* ── Bagian Kiri — Pencarian (layar lebar; di HP ruang dipakai pemilih farm, kiri untuk tombol menu) ── */}
+        <div className="w-10 shrink-0 lg:hidden" aria-hidden />
+        <div className="hidden flex-1 max-w-md md:block">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={18} />
             <Input
@@ -157,10 +78,18 @@ export default function TopNavbar() {
         </div>
 
         {/* ── Bagian Kanan ── */}
-        <div className="flex items-center gap-2 lg:gap-4">
+        <div className="flex min-w-0 items-center gap-1 sm:gap-2 lg:gap-4">
+
+          {/* Konsol admin: tanpa widget kumbung & pemilih farm */}
+          {adminConsole && (
+            <span className="hidden sm:inline-flex items-center rounded-full bg-violet-500/10 px-3 py-1 text-xs font-semibold text-violet-700 dark:text-violet-300">Admin Tandurai</span>
+          )}
+
+          {/* Aktuator yang sedang menyala (jadwal/otomatis/manual) */}
+          {!adminConsole && <ActiveActuatorsBadge />}
 
           {/* Widget Suhu & Kelembaban */}
-          <div className="hidden md:flex items-center gap-3 px-3 py-2 rounded-lg bg-muted/50">
+          <div className={adminConsole ? 'hidden' : 'hidden md:flex items-center gap-3 px-3 py-2 rounded-lg bg-muted/50'}>
             <CloudRain className="text-primary" size={20} />
             <div className="text-sm">
               <div className="font-medium">{liveData.temperature}°C</div>
@@ -169,7 +98,7 @@ export default function TopNavbar() {
           </div>
 
           {/* Last Sync */}
-          <div className="hidden xl:flex items-center gap-2 text-sm text-muted-foreground">
+          <div className={adminConsole ? 'hidden' : 'hidden xl:flex items-center gap-2 text-sm text-muted-foreground'}>
             {isEspOnline
               ? <Wifi className="text-green-500" size={16} />
               : <WifiOff className="text-muted-foreground" size={16} />
@@ -181,6 +110,9 @@ export default function TopNavbar() {
           <Button variant="ghost" size="icon" onClick={toggleTheme} className="transition-all duration-200 hover:scale-105">
             {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
           </Button>
+
+          {/* Pilih farm (berlaku untuk semua halaman) */}
+          {!adminConsole && <FarmSwitcher />}
 
           {/* Notifikasi */}
           <DropdownMenu>

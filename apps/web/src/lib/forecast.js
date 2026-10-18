@@ -1,6 +1,8 @@
 export const FORECAST_STALE_AFTER_MS = 36 * 60 * 60 * 1000;
 export const OFFICIAL_FORECAST_TYPE = 'batch_total';
-export const OFFICIAL_FORECAST_METHOD = 'trained-batch-model-v1';
+// v3 = model batch dari histori kondisi sepanjang batch (300–500 kg/1000 baglog aktif).
+export const OFFICIAL_FORECAST_METHODS = Object.freeze(['trained-batch-model-v3-condition-history', 'trained-batch-model-v1']);
+export const OFFICIAL_FORECAST_METHOD = OFFICIAL_FORECAST_METHODS[0];
 
 const finiteOrNull = value => {
   const numeric = Number(value);
@@ -32,7 +34,7 @@ export function isOfficialBatchForecast(forecast) {
   return Boolean(
     forecast
     && forecast.forecastType === OFFICIAL_FORECAST_TYPE
-    && (forecast.forecastMethod || forecast.model?.forecastMethod) === OFFICIAL_FORECAST_METHOD
+    && OFFICIAL_FORECAST_METHODS.includes(forecast.forecastMethod || forecast.model?.forecastMethod)
     && forecast.input?.batchId,
   );
 }

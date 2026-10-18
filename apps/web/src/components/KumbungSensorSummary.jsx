@@ -3,9 +3,8 @@ import { Link } from 'react-router-dom';
 import { Radio, Thermometer, Droplets, Wind, Clock } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { db } from '../firebase';
-import { subscribeKumbungTelemetry } from '@/lib/telemetryService';
-import { useFarmContext } from '@/contexts/FarmContext';
+import { latestFromSensor } from '@/lib/telemetryService';
+import { ALL_SENSORS, useFarmContext } from '@/contexts/FarmContext';
 
 const timeAgo = (timestamp, now) => {
   const seconds = Math.max(0, Math.floor((now - timestamp) / 1000));
@@ -18,6 +17,8 @@ const timeAgo = (timestamp, now) => {
 
 /** Status pembacaan untuk kartu: belum aktif, belum ada data, stale, invalid, degraded, valid. */
 function readingState(sensor, telemetry) {
+  if (!sensor.gatewayOnline) return { label: 'Gateway offline', className: 'bg-red-500/10 text-red-600 border-red-500/20' };
+  if (sensor.status === 'error') return { label: 'Bermasalah', className: 'bg-red-500/10 text-red-600 border-red-500/20' };
   if (sensor.status === 'pending') return { label: 'Menunggu gateway', className: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20' };
   if (!telemetry) return { label: 'Belum ada data', className: 'bg-muted text-muted-foreground border-border' };
   if (telemetry.quality?.stale) return { label: 'Data usang', className: 'bg-orange-500/10 text-orange-600 border-orange-500/20' };
@@ -36,23 +37,19 @@ const Metric = ({ icon: Icon, value, unit }) => (
 
 /**
  * Ringkasan per sensor di kumbung terpilih. Nilai tidak dirata-ratakan antarsensor: setiap kartu
- * menampilkan sumber, timestamp, dan kualitasnya sendiri. Klik kartu untuk memilih sensor detail.
+ * menampilkan sumber, timestamp, dan kualitasnya sendiri. Klik kartu untuk melihat grafik sensor itu saja;
+ * "rata-rata semua sensor" mengembalikan tampilan gabungan.
  */
 export default function KumbungSensorSummary() {
   const { kumbung, kumbungSensors, selection, setSensorId } = useFarmContext();
   const sensors = kumbungSensors.filter(sensor => sensor.status !== 'inactive');
-  const sensorKey = sensors.map(sensor => sensor.id).join(',');
-  const [latest, setLatest] = useState({});
   const [now, setNow] = useState(Date.now());
 
+  // Nilai terbaru datang realtime (SSE) lewat konteks; jam lokal hanya untuk label "x dtk lalu"/stale.
   useEffect(() => {
-    if (!kumbung?.id) return undefined;
-    setLatest({});
-    return subscribeKumbungTelemetry(db, kumbung.id, sensorKey ? sensorKey.split(',') : [], next => {
-      setLatest(next);
-      setNow(Date.now());
-    }, error => console.error('Gagal memuat telemetry kumbung:', error));
-  }, [kumbung?.id, sensorKey]);
+    const timer = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(timer);
+  }, []);
 
   if (!kumbung) return null;
 
@@ -62,6 +59,12 @@ export default function KumbungSensorSummary() {
         <CardTitle className="text-base flex items-center gap-2">
           <Radio size={18} /> Sensor di {kumbung.name || kumbung.id}
           <span className="text-xs font-normal text-muted-foreground">({sensors.length})</span>
+          {sensors.length > 1 && (
+            <button type="button" onClick={() => setSensorId(ALL_SENSORS)} aria-pressed={Boolean(selection.allSensors)}
+              className={`ml-auto rounded-full border px-3 py-1 text-xs font-normal ${selection.allSensors ? 'border-primary bg-primary/10 text-primary' : 'hover:bg-muted/50'}`}>
+              Tampilkan rata-rata semua sensor
+            </button>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -70,12 +73,12 @@ export default function KumbungSensorSummary() {
             {selection.legacy
               ? `Kumbung ini belum punya sensor di katalog; grafik memakai sensor default lama ${selection.sensorId}. `
               : 'Kumbung ini belum punya sensor. '}
-            <Link to="/devices" className="underline underline-offset-2 hover:text-foreground">Tambahkan sensor di halaman Perangkat</Link>.
+            <Link to="/devices" className="underline underline-offset-2 hover:text-foreground">Tempatkan sensor gateway di halaman Perangkat</Link>.
           </p>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {sensors.map(sensor => {
-              const telemetry = latest[sensor.id];
+              const telemetry = latestFromSensor(sensor, now);
               const state = readingState(sensor, telemetry);
               const selected = sensor.id === selection.sensorId;
               return (
@@ -89,7 +92,7 @@ export default function KumbungSensorSummary() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="font-semibold truncate">{sensor.name || sensor.id}</p>
-                      <p className="text-xs text-muted-foreground font-mono">{sensor.id} · {sensor.gatewayId}</p>
+                      <p className="text-xs text-muted-foreground font-mono">{sensor.id} · {sensor.gatewayName || sensor.gatewayId}</p>
                     </div>
                     <Badge variant="outline" className={`shrink-0 text-[10px] ${state.className}`}>{state.label}</Badge>
                   </div>

@@ -1,8 +1,12 @@
 # Worker Alert Telegram Lokal
 
+> **Digantikan backend `apps/api`.** Alert kini dievaluasi backend dari telemetry MQTT dan Telegram diatur per farm di Settings (owner). Worker ini hanya relevan untuk data Firebase RTDB lama.
+
 Worker ini menggantikan Firebase Cloud Functions untuk notifikasi sensor. Proses berjalan di laptop, memantau `tumbara/monitoring/{kumbungId}/{sensorId}`, menulis status ke `tumbara/alerts/{farmId}/{sensorId}_{jenis}`, dan mengirim Telegram ketika threshold terlewati.
 
-Alert disimpan **per farm**. `farmId` dibaca dari `tumbara/kumbungs/{DEFAULT_KUMBUNG_ID}/farmId` saat alert pertama ditulis; cooldown Telegram disimpan di `tumbara/notif_cooldown/{farmId}/{sensorId}_{jenis}_{severity}`. Anggota farm dapat membaca alert farm-nya, dan browser anggota menulis alert yang sama sebagai fallback bila worker tidak berjalan. `functions/index.js` (Cloud Functions legacy `sensor1`) belum dimigrasikan dan masih menulis struktur lama.
+Worker memantau **semua sensor `active` di katalog farm** (`tumbara/sensors`) secara realtime: sensor baru langsung dipantau, sensor yang dinonaktifkan/dipindah dilepas, dan status offline dihitung per sensor. Farm diatur dengan `ALERT_FARM_ID`; bila kosong diambil dari farm milik `DEFAULT_KUMBUNG_ID`. `DEFAULT_KUMBUNG_ID`/`DEFAULT_SENSOR_ID` hanya dipakai bila farm belum punya sensor aktif di katalog.
+
+Alert disimpan **per farm** dengan ID `{sensorId}_{jenis}`; cooldown Telegram disimpan di `tumbara/notif_cooldown/{farmId}/{sensorId}_{jenis}_{severity}`. Anggota farm dapat membaca alert farm-nya, dan browser anggota menulis alert yang sama sebagai fallback bila worker tidak berjalan. `functions/index.js` (Cloud Functions legacy `sensor1`) belum dimigrasikan dan masih menulis struktur lama.
 
 Tidak diperlukan paket Firebase Blaze. Laptop harus menyala, terhubung internet, dan proses worker harus tetap berjalan.
 
@@ -27,6 +31,7 @@ FIREBASE_DATABASE_URL=https://tandurai-ai-default-rtdb.asia-southeast1.firebased
 FIREBASE_CREDENTIALS_PATH=credentials/firebase-admin.json
 DEFAULT_KUMBUNG_ID=FARM-01-K01
 DEFAULT_SENSOR_ID=SNS-0101
+ALERT_FARM_ID=FARM-01
 MONITOR_LEGACY_SENSOR=false
 TELEGRAM_COOLDOWN_SECONDS=600
 ALERT_LOCATION=Tandurai Smart Farm — Sidoarjo

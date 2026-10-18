@@ -15,10 +15,13 @@ import ReportsPage from './pages/ReportsPage.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
 import OperationsPage from './pages/OperationsExperiencePage.jsx';
 import AIForecastPage from './pages/AIForecastPage.jsx';
+import AdminDevicesPage from './pages/AdminDevicesPage.jsx';
+import AdminOverviewPage from './pages/admin/AdminOverviewPage.jsx';
+import AdminFarmsPage from './pages/admin/AdminFarmsPage.jsx';
+import AdminUsersPage from './pages/admin/AdminUsersPage.jsx';
 import AuthPage from './pages/AuthPage.jsx';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './firebase';
-import { publishUserDirectoryEntry } from './lib/deviceManagementService';
 import { Leaf } from 'lucide-react';
 
 function App() {
@@ -26,11 +29,8 @@ function App() {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      // Backend mencatat user (email terverifikasi, dipakai untuk undangan operator) dari token login.
       setUser(currentUser ?? null);
-      // Indeks email terverifikasi → UID agar owner dapat menambahkan user ini sebagai operator.
-      publishUserDirectoryEntry(currentUser).catch(error => {
-        console.warn('Gagal memperbarui direktori pengguna:', error);
-      });
     });
     return () => unsubscribe();
   }, []);
@@ -44,7 +44,7 @@ function App() {
             <div className="w-10 h-10 rounded-xl bg-green-600 flex items-center justify-center">
               <Leaf size={20} className="text-white" />
             </div>
-            <span className="text-2xl font-black text-foreground">Tandurai</span>
+            <span className="text-2xl font-black text-foreground">Dashboard Tandurai</span>
           </div>
           <div className="animate-spin rounded-full h-7 w-7 border-[3px] border-muted border-t-green-600" />
           <p className="text-sm text-muted-foreground">Memuat sistem Tandurai...</p>
@@ -76,6 +76,11 @@ function App() {
             <Route path="/ai-forecast" element={<AIForecastPage />} />
             <Route path="/automation" element={<AutomationPage />} />
             <Route path="/devices" element={<DevicesPage />} />
+            {/* Konsol admin Tandurai (DashboardLayout mengarahkan admin ke sini dan menolak non-admin) */}
+            <Route path="/admin" element={<AdminOverviewPage />} />
+            <Route path="/admin/farms" element={<AdminFarmsPage />} />
+            <Route path="/admin/users" element={<AdminUsersPage />} />
+            <Route path="/admin/devices" element={<AdminDevicesPage />} />
             <Route path="/farm-members" element={<FarmMembersPage />} />
             <Route path="/alerts" element={<AlertsPage />} />
             <Route path="/historical" element={<HistoricalPage />} />

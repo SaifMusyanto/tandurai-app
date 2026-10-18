@@ -1,63 +1,48 @@
-import { useEffect, useMemo, useState } from 'react';
-import { onValue, ref } from 'firebase/database';
-import { auth, db } from '../firebase';
-import { FIREBASE_PATHS } from '../lib/firebasePaths';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { api } from '../lib/api';
 import { isOfficialBatchForecast, normalizeForecast } from '../lib/forecast';
 import { loadForecastScope } from '../lib/forecastService';
+import { useIot } from '@/contexts/IotContext';
 
 const normalizeError = error => ({
   code: error?.code || 'unknown',
   message: error?.message || 'Perkiraan panen gagal dimuat',
 });
 
+const official = raw => {
+  const normalized = raw ? normalizeForecast(raw) : null;
+  return isOfficialBatchForecast(normalized) ? normalized : null;
+};
+
+/** Forecast terbaru lintas kumbung user (backend), diperbarui lewat event SSE `forecast`. */
 export function useDashboardForecast() {
+  const { subscribe } = useIot();
   const [scope, setScope] = useState({ kumbungs: [], batches: [] });
   const [forecasts, setForecasts] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    let active = true;
-    let unsubscribers = [];
-
-    loadForecastScope(db, auth.currentUser?.uid)
-      .then(nextScope => {
-        if (!active) return;
-        setScope(nextScope);
-        if (!nextScope.kumbungs.length) {
-          setLoading(false);
-          return;
-        }
-
-        unsubscribers = nextScope.kumbungs.map(kumbung => onValue(
-          ref(db, FIREBASE_PATHS.latestForecast(kumbung.id)),
-          snapshot => {
-            if (!active) return;
-            const normalized = snapshot.exists() ? normalizeForecast(snapshot.val()) : null;
-            setForecasts(previous => ({
-              ...previous,
-              [kumbung.id]: isOfficialBatchForecast(normalized) ? normalized : null,
-            }));
-            setLoading(false);
-          },
-          nextError => {
-            if (!active) return;
-            setError(normalizeError(nextError));
-            setLoading(false);
-          },
-        ));
-      })
-      .catch(nextError => {
-        if (!active) return;
-        setError(normalizeError(nextError));
-        setLoading(false);
-      });
-
-    return () => {
-      active = false;
-      unsubscribers.forEach(unsubscribe => unsubscribe());
-    };
+  const load = useCallback(async () => {
+    try {
+      const [nextScope, latest] = await Promise.all([loadForecastScope(), api.latestForecasts()]);
+      setScope(nextScope);
+      setForecasts(Object.fromEntries(latest.map(item => [item.kumbungId, official(item.forecast)])));
+      setError(null);
+    } catch (nextError) {
+      setError(normalizeError(nextError));
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    load();
+    const offForecast = subscribe('forecast', event => {
+      if (event.forecast) setForecasts(previous => ({ ...previous, [event.kumbungId]: official(event.forecast) }));
+    });
+    const offReady = subscribe('ready', load);
+    return () => { offForecast(); offReady(); };
+  }, [load, subscribe]);
 
   const latest = useMemo(() => Object.entries(forecasts)
     .map(([kumbungId, forecast]) => forecast ? { kumbungId, forecast } : null)

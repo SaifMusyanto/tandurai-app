@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet';
 import { motion } from 'framer-motion';
@@ -16,10 +16,13 @@ import {
   Leaf, Droplet, TrendingUp, TrendingDown, Minus,
   Gauge, Wifi, WifiOff,
 } from 'lucide-react';
-import { db } from '../firebase';
 import { useFarmContext } from '@/contexts/FarmContext';
 import KumbungSensorSummary from '@/components/KumbungSensorSummary';
-import { readTelemetryHistory, subscribeLatestTelemetry } from '@/lib/telemetryService';
+import { ActiveActuatorsStrip } from '@/components/iot/ActiveActuators';
+import { useKumbungHistory, useKumbungTelemetry } from '@/hooks/useKumbungTelemetry';
+import { PARAMETERS, PARAMETER_KEYS, latestValues } from '@/lib/parameters';
+import { useWeather } from '@/hooks/useWeather';
+import WeatherCard from '@/components/WeatherCard';
 
 // ─────────────────────────────────────────────────────────────
 // CONSTANTS
@@ -31,25 +34,12 @@ const TIME_FILTERS = [
 ];
 
 
-// Optimal range per sensor (untuk reference lines & status badge)
-const SENSOR_CONFIG = {
-  temperature: { min: 24,  max: 30,  unit: '°C',  label: 'Temperature',       color: '#f97316', gradientId: 'tempGrad'  },
-  humidity:    { min: 70,  max: 85,  unit: '%',   label: 'Humidity',           color: '#3b82f6', gradientId: 'humGrad'   },
-  co2:         { min: 400, max: 600, unit: 'ppm', label: 'CO₂ Level',          color: '#8b5cf6', gradientId: 'co2Grad'   },
-  pressure:    { min: 1005,max: 1025,unit: 'hPa', label: 'Pressure',           color: '#06b6d4', gradientId: 'presGrad'  },
-};
-
-const getWeatherEmoji = (code) => {
-  const c = String(code).toLowerCase();
-  if (c.includes('thunder') || c.includes('petir')) return '⛈️';
-  if (c.includes('heavy rain') || c.includes('hujan lebat')) return '🌧️';
-  if (c.includes('rain') || c.includes('hujan') || c.includes('shower')) return '🌧️';
-  if (c.includes('drizzle') || c.includes('gerimis')) return '🌦️';
-  if (c.includes('cloudy') || c.includes('berawan')) return '☁️';
-  if (c.includes('partly cloudy') || c.includes('cerah berawan')) return '⛅';
-  if (c.includes('clear') || c.includes('sunny') || c.includes('cerah')) return '☀️';
-  return '☁️';
-};
+// Parameter resmi (satu sumber: lib/parameters) + rentang optimal farm (FarmContext) + id gradien grafik.
+const buildSensorConfig = ranges => Object.fromEntries(PARAMETER_KEYS.map(key => {
+  const { label, unit, color } = PARAMETERS[key];
+  const [min, max] = ranges[key];
+  return [key, { label, unit, color, min, max, gradientId: `${key}Grad` }];
+}));
 
 // ─────────────────────────────────────────────────────────────
 // HELPERS
@@ -101,8 +91,7 @@ const CustomTooltip = ({ active, payload, label, unit }) => {
 // ─────────────────────────────────────────────────────────────
 // SENSOR CHART CARD
 // ─────────────────────────────────────────────────────────────
-const SensorChart = ({ sensorKey, data, filter, delay = 0, espOnline }) => {
-  const cfg = SENSOR_CONFIG[sensorKey];
+const SensorChart = ({ sensorKey, cfg, data, filter, delay = 0, espOnline }) => {
   const latest = data[data.length - 1]?.value ?? 0;
   const status = getStatus(latest, cfg.min, cfg.max);
   const trend = getTrend(data);
@@ -116,7 +105,7 @@ const SensorChart = ({ sensorKey, data, filter, delay = 0, espOnline }) => {
   const yMin = Math.floor(minVal - padding);
   const yMax = Math.ceil(maxVal + padding);
 
-  const isArea = sensorKey === 'humidity' || sensorKey === 'pressure';
+  const isArea = sensorKey === 'humidity';
 
   return (
     <motion.div
@@ -216,7 +205,9 @@ export default function MonitoringPage() {
   const [searchParams] = useSearchParams();
   const [activeFilter, setActiveFilter] = useState('24h');
   const focusedSensor = searchParams.get('focus');
-  const focusedConfig = SENSOR_CONFIG[focusedSensor];
+  const { target, kumbung, sensor, ranges } = useFarmContext();
+  const sensorConfig = useMemo(() => buildSensorConfig(ranges), [ranges]);
+  const focusedConfig = sensorConfig[focusedSensor];
 
   useEffect(() => {
     if (!focusedConfig) return;
@@ -224,78 +215,18 @@ export default function MonitoringPage() {
     return () => clearTimeout(timer);
   }, [focusedSensor, focusedConfig]);
 
-  // Semua data history tersimpan di sini (key = timestamp ms)
-  const [logs, setLogs] = useState([]);
-
-  // Status koneksi sensor
-  const [espOnline, setEspOnline] = useState(false);
-  const [sensorQuality, setSensorQuality] = useState(null);
-
   // Grafik yang sudah difilter + diformat
   const [charts, setCharts] = useState({
-    temperature: [], humidity: [], co2: [], pressure: [],
+    temperature: [], humidity: [], co2: [],
   });
 
-  // Weather
-  const [currentWeather, setCurrentWeather] = useState(null);
-  const [hourlyForecast, setHourlyForecast] = useState([]);
-  const [weatherLoading, setWeatherLoading] = useState(true);
+  const weather = useWeather();
 
-  // Sensor terpilih dari konteks farm/kumbung (bukan ID default tersembunyi)
-  const { target, sensor, kumbung } = useFarmContext();
-  const { kumbungId: targetKumbungId, sensorId: targetSensorId } = target;
-
-  // ── EFFECT 1: Query histori terbatas + live telemetry sensor terpilih
-  useEffect(() => {
-    let active = true;
-    setLogs([]);
-    setSensorQuality(null);
-    if (!targetKumbungId || !targetSensorId) {
-      setEspOnline(false);
-      return undefined;
-    }
-    const filterCfg = TIME_FILTERS.find(filter => filter.value === activeFilter);
-    const endAt = Date.now();
-    const startAt = endAt - filterCfg.minutes * 60 * 1000;
-
-    readTelemetryHistory(db, {
-      kumbungId: targetKumbungId,
-      sensorId: targetSensorId,
-      startAt,
-      endAt,
-      maxPoints: activeFilter === 'week' ? 1200 : 300,
-    }).then(rows => {
-      if (active) setLogs(rows);
-    }).catch(error => console.error('Gagal membaca histori telemetry:', error));
-
-    const unsubscribeLive = subscribeLatestTelemetry(db, telemetry => {
-      if (!telemetry) {
-        setEspOnline(false);
-        return;
-      }
-      setSensorQuality(telemetry.quality);
-      setEspOnline(!telemetry.quality.stale && telemetry.quality.status !== 'invalid');
-      const point = {
-        timestamp: telemetry.timestamp || Date.now(),
-        temperature: telemetry.temperature,
-        humidity: telemetry.humidity,
-        co2: telemetry.co2,
-        pressure: telemetry.pressure,
-      };
-      setLogs(previous => {
-        if (previous.some(row => row.timestamp === point.timestamp)) return previous;
-        return [...previous, point].slice(-2000);
-      });
-    }, error => {
-      console.error('Firebase telemetry error:', error);
-      setEspOnline(false);
-    }, { kumbungId: targetKumbungId, sensorId: targetSensorId });
-
-    return () => {
-      active = false;
-      unsubscribeLive();
-    };
-  }, [activeFilter, targetKumbungId, targetSensorId]);
+  // Satu sumber data: gabungan semua sensor kumbung terpilih (histori 10 menit + live SSE).
+  const { kumbungId: targetKumbungId } = target;
+  const { online: espOnline, sensorCount, allSensors } = useKumbungTelemetry();
+  const filterMinutes = TIME_FILTERS.find(filter => filter.value === activeFilter).minutes;
+  const { rows: logs } = useKumbungHistory({ rangeMs: filterMinutes * 60 * 1000, maxPoints: 6000 });
 
   // ── EFFECT 2: Filter + format chart data setiap kali filter/logs berubah
   useEffect(() => {
@@ -311,8 +242,9 @@ export default function MonitoringPage() {
       ? filtered.filter((_, i) => i % Math.ceil(filtered.length / MAX_POINTS) === 0)
       : filtered;
 
+    // Hanya titik yang punya nilai parameter tsb (sensor berbeda bisa mengirim parameter berbeda).
     const toChart = (key) =>
-      downsampled.map(p => ({
+      downsampled.filter(p => typeof p[key] === 'number').map(p => ({
         time: formatXAxis(p.timestamp, activeFilter),
         value: p[key],
       }));
@@ -321,61 +253,16 @@ export default function MonitoringPage() {
       temperature: toChart('temperature'),
       humidity:    toChart('humidity'),
       co2:         toChart('co2'),
-      pressure:    toChart('pressure'),
     });
   }, [activeFilter, logs]);
 
-  // ── EFFECT 3: Cuaca Sidoarjo
-  useEffect(() => {
-    const fetchWeather = async () => {
-      try {
-        setWeatherLoading(true);
-        const url = 'https://api.open-meteo.com/v1/forecast?latitude=-7.4478&longitude=112.7183&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&hourly=temperature_2m,weather_code,wind_speed_10m&timezone=Asia%2FJakarta&forecast_days=1';
-        const res  = await fetch(url);
-        if (!res.ok) throw new Error();
-        const data = await res.json();
-
-        const codeMap = { 0:'Cerah',1:'Cerah Berawan',2:'Cerah Berawan',3:'Berawan',45:'Kabut',51:'Gerimis',61:'Hujan Ringan',63:'Hujan',65:'Hujan Lebat',80:'Hujan Mandi',95:'Hujan Petir' };
-
-        setCurrentWeather({
-          temp:      Math.round(data.current.temperature_2m),
-          humidity:  data.current.relative_humidity_2m,
-          windSpeed: Math.round(data.current.wind_speed_10m),
-          condition: codeMap[data.current.weather_code] || 'Berawan',
-          code:      data.current.weather_code,
-        });
-
-        const nowH = new Date().getHours();
-        setHourlyForecast(
-          Array.from({ length: 6 }, (_, i) => {
-            const idx = (nowH + i) % 24;
-            return {
-              time: i === 0 ? 'Sekarang' : (data.hourly.time[idx]?.split('T')[1]?.slice(0,5) || '--:--'),
-              temp: Math.round(data.hourly.temperature_2m[idx]),
-              code: data.hourly.weather_code[idx],
-              wind: Math.round(data.hourly.wind_speed_10m[idx]),
-              condition: codeMap[data.hourly.weather_code[idx]] || 'Berawan',
-            };
-          })
-        );
-        setWeatherLoading(false);
-      } catch {
-        setWeatherLoading(false);
-      }
-    };
-
-    fetchWeather();
-    const iv = setInterval(fetchWeather, 15 * 60 * 1000);
-    return () => clearInterval(iv);
-  }, []);
-
-  // Latest values untuk stats bar
-  const latest = logs[logs.length - 1];
+  // Nilai terakhir per parameter (bisa dari sensor berbeda) untuk stats bar
+  const latest = useMemo(() => (logs.length ? latestValues(logs) : null), [logs]);
 
   return (
     <>
       <Helmet>
-        <title>Monitoring — Tandurai</title>
+        <title>Monitoring - Dashboard Tandurai</title>
         <meta name="description" content="Real-time environmental monitoring charts and trends" />
       </Helmet>
 
@@ -396,7 +283,7 @@ export default function MonitoringPage() {
               <h1 className="text-3xl font-bold mb-1">Environmental Monitoring</h1>
               <p className="text-sm font-medium mb-1">
                 {kumbung?.name || targetKumbungId || 'Pilih kumbung'}
-                {targetSensorId && <span className="text-muted-foreground font-normal"> · {sensor?.name || targetSensorId} ({targetSensorId})</span>}
+                <span className="text-muted-foreground font-normal"> · {allSensors ? `rata-rata ${sensorCount} sensor` : sensor?.name || 'sensor'}</span>
               </p>
               <p className="text-muted-foreground text-sm flex items-center gap-2">
                 Real-time sensor trends dari hardware Tandurai
@@ -410,16 +297,6 @@ export default function MonitoringPage() {
                     <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground" />
                     Sensor Offline
                   </span>
-                )}
-                {sensorQuality?.invalidSensors?.length > 0 && (
-                  <Badge variant="destructive" className="text-[10px]">
-                    Invalid: {sensorQuality.invalidSensors.join(', ')}
-                  </Badge>
-                )}
-                {sensorQuality?.missingSensors?.length > 0 && (
-                  <Badge variant="outline" className="text-[10px]">
-                    Missing: {sensorQuality.missingSensors.join(', ')}
-                  </Badge>
                 )}
               </p>
             </div>
@@ -440,14 +317,22 @@ export default function MonitoringPage() {
           </div>
         </motion.div>
 
-        {/* ── Ringkasan per sensor di kumbung terpilih ── */}
+        {/* ── Cuaca luar (lokasi dari Pengaturan) ── */}
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+          <WeatherCard weather={weather} />
+        </motion.div>
+
+        {/* ── Aktuator yang sedang menyala di kumbung ini ── */}
+        {targetKumbungId && <ActiveActuatorsStrip kumbungId={targetKumbungId} />}
+
+        {/* ── Ringkasan per sensor gateway di kumbung terpilih ── */}
         <KumbungSensorSummary />
 
         {/* ── Latest Values Summary Bar ── */}
         {latest && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {Object.entries(SENSOR_CONFIG).map(([key, cfg]) => {
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {Object.entries(sensorConfig).map(([key, cfg]) => {
                 const val = latest[key] ?? 0;
                 const st = getStatus(val, cfg.min, cfg.max);
                 return (
@@ -472,78 +357,11 @@ export default function MonitoringPage() {
 
         {/* ── Charts Grid ── */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <SensorChart sensorKey="temperature" data={charts.temperature} filter={activeFilter} delay={0}    espOnline={espOnline} />
-          <SensorChart sensorKey="humidity"    data={charts.humidity}    filter={activeFilter} delay={0.05} espOnline={espOnline} />
-          <SensorChart sensorKey="co2"         data={charts.co2}         filter={activeFilter} delay={0.1}  espOnline={espOnline} />
-          <SensorChart sensorKey="pressure"    data={charts.pressure}    filter={activeFilter} delay={0.15} espOnline={espOnline} />
+          <SensorChart sensorKey="temperature" cfg={sensorConfig.temperature} data={charts.temperature} filter={activeFilter} delay={0}    espOnline={espOnline} />
+          <SensorChart sensorKey="humidity" cfg={sensorConfig.humidity}    data={charts.humidity}    filter={activeFilter} delay={0.05} espOnline={espOnline} />
+          <SensorChart sensorKey="co2" cfg={sensorConfig.co2}         data={charts.co2}         filter={activeFilter} delay={0.1}  espOnline={espOnline} />
         </div>
 
-        {/* ── Weather Forecast ── */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
-          <Card className="overflow-hidden">
-            <CardHeader className="flex flex-row items-center justify-between pb-4 border-b border-border/60 bg-muted/10">
-              <CardTitle className="flex items-center gap-2 text-base font-bold">
-                <Clock className="text-primary" size={20} />
-                Ramalan 24 Jam — Sidoarjo
-              </CardTitle>
-              <Badge variant="secondary" className="text-[10px] bg-blue-500/10 text-blue-600 border-none px-2.5 font-bold">
-                📡 Live Satelit
-              </Badge>
-            </CardHeader>
-            <CardContent className="p-5">
-              {weatherLoading ? (
-                <div className="flex flex-col items-center justify-center py-10 gap-2">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary" />
-                  <p className="text-xs text-muted-foreground">Menghubungkan satelit cuaca Sidoarjo...</p>
-                </div>
-              ) : currentWeather ? (
-                <div className="flex flex-col sm:flex-row gap-6">
-                  {/* Current */}
-                  <div className="flex items-center gap-4 bg-gradient-to-br from-primary/5 to-transparent p-4 rounded-xl border border-primary/10 flex-shrink-0">
-                    <span className="text-5xl leading-none select-none">{getWeatherEmoji(currentWeather.code)}</span>
-                    <div>
-                      <p className="text-2xl font-black">{currentWeather.temp}°C</p>
-                      <p className="text-xs text-muted-foreground font-semibold">{currentWeather.condition}</p>
-                      <p className="text-[11px] text-muted-foreground mt-1">
-                        💧 {currentWeather.humidity}% &nbsp;·&nbsp; 💨 {currentWeather.windSpeed} km/j
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Hourly */}
-                  <div className="overflow-x-auto flex-1 scrollbar-none">
-                    <div className="flex gap-2.5 min-w-max">
-                      {hourlyForecast.map((fc, i) => (
-                        <div
-                          key={i}
-                          className={`rounded-xl p-3 flex flex-col items-center text-center border w-[88px] transition-all ${
-                            i === 0
-                              ? 'bg-primary text-primary-foreground border-primary shadow-md shadow-primary/10'
-                              : 'bg-muted/40 border-border/50 hover:bg-muted/70'
-                          }`}
-                        >
-                          <span className={`text-[10px] font-bold ${i === 0 ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
-                            {fc.time}
-                          </span>
-                          <span className="text-2xl my-2 select-none">{getWeatherEmoji(fc.code)}</span>
-                          <span className="text-sm font-black">{fc.temp}°C</span>
-                          <span className={`text-[9px] mt-1 truncate w-full font-medium ${i === 0 ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
-                            💨 {fc.wind} km/j
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-destructive justify-center py-6">
-                  <AlertCircle size={16} />
-                  <p className="text-xs font-bold">Gagal memuat ramalan cuaca.</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </motion.div>
 
       </div>
     </>

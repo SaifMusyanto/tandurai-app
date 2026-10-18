@@ -1,54 +1,29 @@
-import React, { useEffect, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Helmet } from 'react-helmet';
-import { motion } from 'framer-motion';
 import {
-  AlertTriangle,
-  AlertCircle,
-  Info,
-  Filter,
-  Thermometer,
-  Droplets,
-  Wind,
-  WifiOff,
-  Loader2,
+  AlertCircle, AlertTriangle, CheckCircle2, Droplets, Info, Thermometer, Wind, WifiOff,
 } from 'lucide-react';
-import { auth, db } from '../firebase';
-import { subscribeFarmAlerts } from '@/lib/alertsService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import DataTable from '@/components/DataTable';
+import TelegramStatus from '@/components/TelegramStatus';
+import { useAlerts } from '@/hooks/useAlerts';
+import { useFarmContext } from '@/contexts/FarmContext';
+import { useIot } from '@/contexts/IotContext';
+import { cn } from '@/lib/utils';
 
-const SENSOR_ICONS = {
-  temperature_high: Thermometer,
-  humidity_low: Droplets,
-  co2_high: Wind,
-  device_offline: WifiOff,
+const SENSOR_ICONS = { temperature_high: Thermometer, humidity_low: Droplets, co2_high: Wind, device_offline: WifiOff };
+const SEVERITY = {
+  critical: { label: 'Kritis', icon: AlertTriangle, className: 'bg-red-500/10 text-red-600 border-red-500/20' },
+  warning: { label: 'Peringatan', icon: AlertCircle, className: 'bg-yellow-500/10 text-yellow-700 border-yellow-500/20' },
+  normal: { label: 'Normal', icon: Info, className: 'bg-green-500/10 text-green-600 border-green-500/20' },
 };
+const ALL = 'all';
 
-const SEVERITY_CONFIG = {
-  critical: {
-    icon: AlertTriangle,
-    color: 'bg-red-500/10 text-red-600 border-red-500/20',
-  },
-  warning: {
-    icon: AlertCircle,
-    color: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20',
-  },
-  normal: {
-    icon: Info,
-    color: 'bg-green-500/10 text-green-600 border-green-500/20',
-  },
-};
-
-const getTimeAgo = (timestamp) => {
+const timeAgo = timestamp => {
   const time = Number(timestamp);
-  if (!time) return 'Belum ada waktu';
+  if (!time) return '—';
   const minutes = Math.max(0, Math.floor((Date.now() - time) / 60000));
   if (minutes < 1) return 'Baru saja';
   if (minutes < 60) return `${minutes} menit lalu`;
@@ -56,143 +31,132 @@ const getTimeAgo = (timestamp) => {
   if (hours < 24) return `${hours} jam lalu`;
   return `${Math.floor(hours / 24)} hari lalu`;
 };
+const fullTime = timestamp => (timestamp ? new Date(timestamp).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
 
 export default function AlertsPage() {
-  const [alerts, setAlerts] = useState([]);
-  const [severityFilter, setSeverityFilter] = useState('all');
-  const [loading, setLoading] = useState(true);
+  const { alerts, loading, error } = useAlerts();
+  const { farm, kumbungs } = useFarmContext();
+  const { gateways } = useIot();
+  const [status, setStatus] = useState(ALL);
+  const [severity, setSeverity] = useState(ALL);
+  const [kumbungId, setKumbungId] = useState(ALL);
 
-  const uid = auth.currentUser?.uid;
+  // Nama yang mudah dibaca: kumbung, sensor, dan gateway (bukan ID).
+  const names = useMemo(() => {
+    const map = new Map(kumbungs.map(item => [item.id, item.name]));
+    for (const gateway of gateways) {
+      map.set(gateway.id, gateway.name || gateway.id);
+      for (const sensor of gateway.sensors || []) map.set(sensor.id, sensor.name || sensor.id);
+    }
+    return map;
+  }, [kumbungs, gateways]);
 
-  useEffect(() => {
-    if (!uid) return undefined;
-    return subscribeFarmAlerts(db, uid, (nextAlerts) => {
-      setAlerts(nextAlerts);
-      setLoading(false);
-    }, () => {
-      setAlerts([]);
-      setLoading(false);
-    });
-  }, [uid]);
+  const farmAlerts = useMemo(() => alerts.filter(alert => alert.farmId === farm?.id), [alerts, farm?.id]);
+  const rows = farmAlerts.filter(alert => (status === ALL || alert.status === status)
+    && (severity === ALL || alert.severity === severity)
+    && (kumbungId === ALL || alert.kumbungId === kumbungId));
 
-  const filteredAlerts = severityFilter === 'all'
-    ? alerts
-    : alerts.filter(alert => alert.severity === severityFilter);
+  const active = farmAlerts.filter(alert => alert.status === 'active');
+  const cards = [
+    { label: 'Kritis aktif', count: active.filter(a => a.severity === 'critical').length, icon: AlertTriangle, tone: 'text-red-600' },
+    { label: 'Peringatan aktif', count: active.filter(a => a.severity === 'warning').length, icon: AlertCircle, tone: 'text-yellow-600' },
+    { label: 'Sudah pulih', count: farmAlerts.filter(a => a.status === 'resolved').length, icon: CheckCircle2, tone: 'text-green-600' },
+  ];
 
-  const criticalCount = alerts.filter(a => a.status === 'active' && a.severity === 'critical').length;
-  const warningCount = alerts.filter(a => a.status === 'active' && a.severity === 'warning').length;
-  const normalCount = alerts.filter(a => a.status === 'resolved' || a.severity === 'normal').length;
+  const location = alert => [alert.kumbungId && (names.get(alert.kumbungId) || alert.kumbungId), names.get(alert.sensorId) || alert.sensorId].filter(Boolean).join(' · ');
+
+  const columns = [
+    {
+      key: 'alert', header: 'Peringatan', cell: alert => {
+        const config = SEVERITY[alert.severity] || SEVERITY.normal;
+        const Icon = SENSOR_ICONS[alert.sensor] || Info;
+        const isActive = alert.status === 'active';
+        return (
+          <div className="flex items-start gap-3">
+            <span className={cn('mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border', isActive ? config.className : SEVERITY.normal.className)}><Icon size={17} /></span>
+            <div className="min-w-0">
+              <p className="font-semibold leading-snug">{alert.type}</p>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {isActive && <Badge variant="outline" className={cn('text-[11px]', config.className)}>{config.label}</Badge>}
+                <Badge variant="outline" className={cn('text-[11px]', isActive ? 'border-red-500/30 text-red-600' : 'border-green-500/30 text-green-600')}>{isActive ? 'Aktif' : 'Pulih'}</Badge>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">{location(alert)}</p>
+            </div>
+          </div>
+        );
+      },
+    },
+    { key: 'message', header: 'Keterangan', hideOnMobile: true, className: 'text-sm max-w-xs', cell: alert => alert.message },
+    {
+      key: 'value', header: 'Nilai / ambang', hideOnMobile: true, className: 'text-sm whitespace-nowrap',
+      cell: alert => (alert.value == null ? '—' : `${alert.value} ${alert.unit}${alert.threshold != null ? ` / ${alert.threshold}` : ''}`),
+    },
+    {
+      key: 'time', header: 'Waktu', className: 'text-sm whitespace-nowrap',
+      cell: alert => <span title={fullTime(alert.updatedAt)}>{timeAgo(alert.updatedAt)}</span>,
+    },
+    { key: 'started', header: 'Mulai', hideOnMobile: true, className: 'text-xs text-muted-foreground whitespace-nowrap', cell: alert => fullTime(alert.startedAt) },
+    {
+      key: 'telegram', header: 'Telegram', hideOnMobile: true, className: 'text-xs whitespace-nowrap',
+      cell: alert => (alert.telegramSentAt ? <span className="text-emerald-600">Terkirim {timeAgo(alert.telegramSentAt)}</span> : <span className="text-muted-foreground">Tidak dikirim</span>),
+    },
+  ];
+
+  const filterSelect = (value, onChange, label, options) => (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="h-10 w-full sm:w-44" aria-label={label}><SelectValue /></SelectTrigger>
+      <SelectContent>{options.map(([optionValue, text]) => <SelectItem key={optionValue} value={optionValue}>{text}</SelectItem>)}</SelectContent>
+    </Select>
+  );
 
   return (
     <>
       <Helmet>
-        <title>Alerts - Tandurai</title>
+        <title>Peringatan - Dashboard Tandurai</title>
         <meta name="description" content="Peringatan dini kondisi kumbung secara real-time" />
       </Helmet>
 
-      <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold mb-2">Pusat Peringatan Dini</h1>
-            <p className="text-muted-foreground">Status suhu, kelembapan, CO₂, dan koneksi perangkat secara real-time</p>
-          </div>
-          <Select value={severityFilter} onValueChange={setSeverityFilter}>
-            <SelectTrigger className="w-44">
-              <Filter size={16} className="mr-2" />
-              <SelectValue placeholder="Filter status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Semua Status</SelectItem>
-              <SelectItem value="critical">Critical</SelectItem>
-              <SelectItem value="warning">Warning</SelectItem>
-              <SelectItem value="normal">Normal</SelectItem>
-            </SelectContent>
-          </Select>
+      <div className="space-y-5">
+        <div>
+          <h1 className="text-2xl font-bold sm:text-3xl">Peringatan Dini</h1>
+          <p className="text-sm text-muted-foreground">Suhu, kelembapan, CO₂, dan koneksi perangkat {farm ? `di ${farm.name}` : ''} — diperbarui otomatis.</p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {[
-            { label: 'Critical Aktif', count: criticalCount, icon: AlertTriangle, style: 'border-red-500/20 text-red-600' },
-            { label: 'Warning Aktif', count: warningCount, icon: AlertCircle, style: 'border-yellow-500/20 text-yellow-600' },
-            { label: 'Normal / Pulih', count: normalCount, icon: Info, style: 'border-green-500/20 text-green-600' },
-          ].map(({ label, count, icon: Icon, style }, index) => (
-            <motion.div key={label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: index * 0.08 }}>
-              <Card className={style.split(' ')[0]}>
-                <CardContent className="pt-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground mb-1">{label}</p>
-                      <p className={`text-3xl font-bold ${style.split(' ')[1]}`}>{count}</p>
-                    </div>
-                    <Icon className={style.split(' ')[1]} size={32} />
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
+        {farm && <TelegramStatus farm={farm} />}
+
+        <div className="grid grid-cols-3 gap-3">
+          {cards.map(({ label, count, icon: Icon, tone }) => (
+            <Card key={label}>
+              <CardContent className="flex items-center justify-between gap-2 p-4">
+                <div>
+                  <p className="text-xs text-muted-foreground sm:text-sm">{label}</p>
+                  <p className={cn('text-2xl font-bold sm:text-3xl', tone)}>{count}</p>
+                </div>
+                <Icon className={cn('hidden sm:block', tone)} size={28} />
+              </CardContent>
+            </Card>
           ))}
         </div>
 
         <Card>
-          <CardHeader>
-            <CardTitle>
-              Status Alert
-              <span className="text-muted-foreground font-normal ml-2">({filteredAlerts.length})</span>
-            </CardTitle>
+          <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
+            <CardTitle className="text-lg">Daftar peringatan <span className="font-normal text-muted-foreground">({rows.length})</span></CardTitle>
+            <div className="grid grid-cols-1 gap-2 sm:flex">
+              {filterSelect(status, setStatus, 'Filter status', [[ALL, 'Semua status'], ['active', 'Aktif'], ['resolved', 'Pulih']])}
+              {filterSelect(severity, setSeverity, 'Filter tingkat', [[ALL, 'Semua tingkat'], ['critical', 'Kritis'], ['warning', 'Peringatan'], ['normal', 'Normal']])}
+              {filterSelect(kumbungId, setKumbungId, 'Filter kumbung', [[ALL, 'Semua kumbung'], ...kumbungs.map(item => [item.id, item.name || item.id])])}
+            </div>
           </CardHeader>
           <CardContent>
-            {loading ? (
-              <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
-                <Loader2 className="animate-spin" size={20} /> Memuat status alert…
-              </div>
-            ) : filteredAlerts.length === 0 ? (
-              <div className="text-center py-12">
-                <Info className="mx-auto text-muted-foreground mb-4" size={48} />
-                <p className="text-muted-foreground">Belum ada alert untuk farm Anda.</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {filteredAlerts.map((alert, index) => {
-                  const config = SEVERITY_CONFIG[alert.severity] || SEVERITY_CONFIG.normal;
-                  const SeverityIcon = config.icon;
-                  const DeviceIcon = SENSOR_ICONS[alert.sensor] || Info;
-                  const isActive = alert.status === 'active';
-
-                  return (
-                    <motion.div
-                      key={`${alert.farmId}/${alert.id}`}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ duration: 0.3, delay: index * 0.05 }}
-                      className={`flex items-start gap-4 p-4 rounded-lg border transition-colors ${isActive ? 'bg-muted border-border' : 'bg-green-500/5 border-green-500/15'}`}
-                    >
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${config.color}`}>
-                        <SeverityIcon size={20} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-3 mb-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <h3 className="font-semibold">{alert.type}</h3>
-                            <Badge variant="outline" className={config.color}>{alert.severity}</Badge>
-                            <Badge variant="outline" className={isActive ? 'border-red-500/20 text-red-600' : 'border-green-500/20 text-green-600'}>
-                              {isActive ? 'Aktif' : 'Resolved'}
-                            </Badge>
-                          </div>
-                          <span className="text-xs text-muted-foreground whitespace-nowrap">{getTimeAgo(alert.updatedAt)}</span>
-                        </div>
-                        <p className="text-sm text-muted-foreground mb-2">{alert.message}</p>
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                          <DeviceIcon size={14} />
-                          <span>{alert.device}</span>
-                          {alert.sensorId && (
-                            <span>· {alert.farmId} / {alert.kumbungId} / {alert.sensorId}</span>
-                          )}
-                        </div>
-                      </div>
-                    </motion.div>
-                  );
-                })}
-              </div>
-            )}
+            <DataTable
+              columns={columns}
+              rows={rows}
+              rowKey={alert => alert.id}
+              loading={loading}
+              pageSize={15}
+              rowClassName={alert => (alert.status === 'active' && alert.severity === 'critical' ? 'bg-red-500/5' : undefined)}
+              emptyText={error ? `Gagal memuat peringatan: ${error}` : farmAlerts.length ? 'Tidak ada peringatan pada filter ini.' : 'Belum ada peringatan. Kondisi kumbung aman.'}
+            />
           </CardContent>
         </Card>
       </div>

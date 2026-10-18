@@ -31,7 +31,8 @@ const riskDetails = {
   },
 };
 
-const firstMonitoringRisk = risks => (risks || []).map(code => riskDetails[code]).find(Boolean);
+// riskFactors berupa [{ code, severity }] (format lama: string kode).
+const firstMonitoringRisk = risks => (risks || []).map(item => riskDetails[item?.code || item]).find(Boolean);
 
 export default function DashboardForecastCard() {
   const { loading, error, forecast, kumbung, batch } = useDashboardForecast();

@@ -1,10 +1,12 @@
 # TANDURAI Local AI Worker
 
+> **Sumber data:** `DATA_SOURCE=api` (default) membaca/menulis lewat API worker backend `apps/api` (`BACKEND_URL`, `WORKER_TOKEN` sama dengan `apps/api/.env`) — tanpa Firebase. `DATA_SOURCE=firebase` memakai RTDB lama dengan service account (langkah di bawah).
+
 Worker berjalan di laptop/server lokal dan memakai Firebase Admin SDK. Model tidak pernah masuk browser. Worker menyediakan koneksi Firebase, feature engineering harian, inferensi model lokal, provenance, dan penyimpanan forecast terversi.
 
 ## Persyaratan
 
-- Python 3.10–3.13 (direkomendasikan 3.11).
+- Python 3.11–3.13 (scikit-learn 1.8.0 butuh ≥ 3.11; Ubuntu 24.04 bawaan 3.12 bisa dipakai).
 - Akses ke project Firebase demo `tandurai-ai`.
 - Service-account JSON yang disimpan lokal.
 
@@ -106,3 +108,14 @@ Ketika pengguna berhak membuka halaman **Perkiraan Panen**, web menulis perminta
 Target model tetap harvest_next_7d_kg. Untuk menjaga jumlah baglog sebagai dasar skala, inferensi menghitung hasil pada referensi 10.000 baglog lalu menskalakan kilogram secara linear ke baglogCountActive. Hal ini sesuai generator data sintetis yang membentuk kapasitas panen secara linear dari jumlah baglog, tetapi tetap bukan klaim akurasi lapangan.
 
 Periode yang ditampilkan adalah tujuh hari setelah tanggal perhitungan. Batch tahap awal dapat menghasilkan nol untuk periode tersebut; itu berarti panen belum diperkirakan terjadi minggu itu, bukan berarti seluruh siklus tidak menghasilkan panen.
+
+## Model total panen batch (v3, histori kondisi)
+
+Perkiraan total panen di web memakai model batch v3:
+
+- Worker mengambil telemetry **sejak batch dimulai** (maks 120 hari) dan menghitung `batchHistory`: rata-rata, simpangan baku, dan persentase waktu di rentang optimal untuk suhu (22–28 °C), kelembapan (80–90 %), dan CO₂ (≤ 1000 ppm).
+- Hasil per baglog aktif ±0,30 kg bila histori hampir selalu buruk dan ±0,50 kg bila selalu optimal, yaitu 300–500 kg per 1.000 baglog aktif.
+- Isian sintetis mode demo tidak dipakai untuk total panen bila histori sensor tersedia.
+- Bila histori belum cukup (< ±6 jam data), model memakai kondisi netral (±400 kg/1.000 baglog), tingkat kepastian "Rendah", dan risiko `no_sensor_history`.
+- Forecast menyertakan `conditionHistory` (% optimal per parameter, hari data) dan `prediction.kgPer1000ActiveBaglogs`.
+

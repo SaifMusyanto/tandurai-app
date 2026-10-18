@@ -1,0 +1,32 @@
+{
+  "name": "api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Backend IoT Tandurai: MQTT ⇄ PostgreSQL ⇄ REST/SSE",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate": "node tools/migrate.mjs",
+    "factory": "node tools/factory-provision.mjs",
+    "test": "node --test test/units.test.js",
+    "test:e2e": "node tools/e2e.mjs && node tools/e2e-domain.mjs && node tools/e2e-import.mjs",
+    "test:e2e:iot": "node tools/e2e.mjs",
+    "test:e2e:domain": "node tools/e2e-domain.mjs",
+    "test:e2e:import": "node tools/e2e-import.mjs",
+    "import:rtdb": "node tools/import-rtdb.mjs",
+    "broker": "node tools/broker.mjs",
+    "broker:dev": "node tools/broker.mjs",
+    "device:check": "node tools/device-check.mjs"
+  },
+  "dependencies": {
+    "aedes": "^0.51.3",
+    "express": "^4.22.3",
+    "firebase-admin": "^13.10.0",
+    "mqtt": "^5.16.1",
+    "pg": "^8.23.1"
+  }
+}

@@ -1,0 +1,18 @@
+# Backend: baca pesan perangkat, kirim cmd/config.
+user tandurai-backend
+topic read tandurai/gw/+/register
+topic read tandurai/gw/+/status
+topic read tandurai/gw/+/telemetry
+topic read tandurai/gw/+/state
+topic read tandurai/gw/+/ack
+topic write tandurai/gw/+/cmd
+topic write tandurai/gw/+/config
+
+# Perangkat (username = hwUid): hanya topic miliknya.
+pattern write tandurai/gw/%u/register
+pattern write tandurai/gw/%u/status
+pattern write tandurai/gw/%u/telemetry
+pattern write tandurai/gw/%u/state
+pattern write tandurai/gw/%u/ack
+pattern read tandurai/gw/%u/cmd
+pattern read tandurai/gw/%u/config

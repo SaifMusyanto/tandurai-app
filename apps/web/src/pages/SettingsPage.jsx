@@ -1,12 +1,13 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { Helmet } from 'react-helmet';
+import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Save, User, Bell, Sliders, Globe, Shield,
   ChevronRight, Check, LogOut, Eye, EyeOff,
   MapPin, Loader2, Send, AlertTriangle, Key,
   Thermometer, Droplets, Wind, Leaf, Waves,
-  FlaskConical, Clock,
+  FlaskConical, Clock, Search, CloudSun,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -16,8 +17,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 
-import { auth, db } from '../firebase';
-import { ref, get, set, update } from 'firebase/database';
+import { auth } from '../firebase';
+import { api } from '@/lib/api';
+import { useFarmContext } from '@/contexts/FarmContext';
+import { DEFAULT_WEATHER_LOCATION, resolveWeatherLocation, searchWeatherLocations } from '@/lib/weather';
+import { DEFAULT_RANGES, PARAMETERS } from '@/lib/parameters';
 import {
   updateProfile,
   updatePassword,
@@ -31,7 +35,7 @@ import {
 ───────────────────────────────────────────────────────────────────── */
 const T = {
   id: {
-    pageTitle: 'Pengaturan - Tandurai',
+    pageTitle: 'Pengaturan - Dashboard Tandurai',
     heading: 'Pengaturan',
     subheading: 'Kelola preferensi farm dan konfigurasi sistem Anda',
     saveBtn: 'Simpan Perubahan',
@@ -91,7 +95,7 @@ const T = {
       activeHoursHint: 'Otomasi hanya berjalan dalam rentang jam ini',
       to: 'hingga',
       cooldown: 'Anti-Spam Notifikasi',
-      cooldownDesc: 'Pengaturan ini sinkron dengan Cloud Functions — mencegah notifikasi berulang',
+      cooldownDesc: 'Disimpan per farm di backend (owner) — mencegah notifikasi Telegram berulang',
       cooldownMinutes: 'Cooldown Notifikasi (menit)',
       cooldownHint: 'Alert yang sama tidak dikirim ulang dalam X menit. Default: 10 menit',
     },
@@ -123,7 +127,7 @@ const T = {
       notifWeekly: 'Ringkasan Mingguan',
       notifWeeklyHint: 'Rangkuman aktivitas farm setiap Senin pukul 08:00 WIB',
       alertThresholds: 'Batas Peringatan Sensor',
-      alertThresholdsDesc: 'Nilai-nilai ini dibaca langsung oleh Cloud Functions untuk memutuskan kapan mengirim alert. Simpan perubahan agar sinkron.',
+      alertThresholdsDesc: 'Backend memakai ambang suhu tinggi, kelembapan rendah, dan CO₂ farm ini untuk membuat alert dan notifikasi. Ambang lain disimpan sebagai preferensi Anda.',
       tempCriticalHigh: 'Suhu Kritis Atas (°C)',
       tempCriticalHighHint: 'CRITICAL — suhu di atas ini sangat berbahaya bagi jamur',
       tempWarnHigh: 'Suhu Warning Atas (°C)',
@@ -204,7 +208,7 @@ const T = {
     },
   },
   en: {
-    pageTitle: 'Settings - Tandurai',
+    pageTitle: 'Settings - Dashboard Tandurai',
     heading: 'Settings',
     subheading: 'Manage your farm preferences and system configuration',
     saveBtn: 'Save Changes',
@@ -264,7 +268,7 @@ const T = {
       activeHoursHint: 'Automation only runs within this time window',
       to: 'to',
       cooldown: 'Anti-Spam Notification',
-      cooldownDesc: 'Synced with Cloud Functions — prevents repeated notifications',
+      cooldownDesc: 'Stored per farm in the backend (owner) — prevents repeated Telegram notifications',
       cooldownMinutes: 'Notification Cooldown (minutes)',
       cooldownHint: 'Same alert won\'t resend within X minutes. Default: 10 min',
     },
@@ -296,7 +300,7 @@ const T = {
       notifWeekly: 'Weekly Summary',
       notifWeeklyHint: 'Farm activity digest every Monday 08:00 WIB',
       alertThresholds: 'Sensor Alert Thresholds',
-      alertThresholdsDesc: 'These values are read directly by Cloud Functions to decide when to send alerts. Save changes to sync.',
+      alertThresholdsDesc: 'The backend uses the farm high-temperature, low-humidity, and CO₂ thresholds for alerts and notifications. Other thresholds are saved as your preferences.',
       tempCriticalHigh: 'Critical High Temp (°C)',
       tempCriticalHighHint: 'CRITICAL — above this temp is dangerous for mushrooms',
       tempWarnHigh: 'Warning High Temp (°C)',
@@ -464,6 +468,94 @@ function ThresholdInput({ icon: Icon, iconColor, value, onChange, min, max, disa
 }
 
 /* ─────────────────────────────────────────────────────────────────────
+   LOKASI RAMALAN CUACA — dipakai kartu cuaca Dashboard & Monitoring
+───────────────────────────────────────────────────────────────────── */
+function WeatherLocationSection() {
+  const lang = useLang();
+  const id = lang === 'id';
+  const { form, setField } = useForm();
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const selected = resolveWeatherLocation(form);
+  const isDefault = !form.weatherLocation;
+
+  const search = async (event) => {
+    event?.preventDefault();
+    if (query.trim().length < 2) return;
+    setSearching(true);
+    try {
+      setResults(await searchWeatherLocations(query.trim()));
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const choose = ({ name, latitude, longitude }) => {
+    setField('weatherLocation', { name, latitude, longitude });
+    setResults(null);
+    setQuery('');
+  };
+
+  // Koordinat GPS dari "Deteksi Lokasi" di atas (format "lat, lon").
+  const farmCoords = (form.locationCoords || '').split(',').map(Number);
+  const canUseFarm = farmCoords.length === 2 && farmCoords.every(Number.isFinite);
+
+  return (
+    <Section
+      title={id ? 'Lokasi Ramalan Cuaca' : 'Weather Forecast Location'}
+      description={id ? 'Kartu cuaca di Dashboard dan Monitoring memakai lokasi ini. Simpan pengaturan setelah memilih.' : 'Weather cards on Dashboard and Monitoring use this location. Save settings after choosing.'}
+    >
+      <Field label={id ? 'Lokasi terpilih' : 'Selected location'} hint={id ? 'Pilih kota/kecamatan terdekat dengan kumbung.' : 'Choose the city/district nearest to the farm.'}>
+        <div className="space-y-3 max-w-md">
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+            <CloudSun size={15} className="text-primary shrink-0" />
+            <span className="font-medium">{selected.name}</span>
+            <span className="text-[11px] font-mono text-muted-foreground">{selected.latitude.toFixed(3)}, {selected.longitude.toFixed(3)}</span>
+            {isDefault && <Badge variant="outline" className="text-[10px]">{id ? 'bawaan' : 'default'}</Badge>}
+          </div>
+
+          <div className="flex gap-2">
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && search(e)} placeholder={id ? 'Cari kota, mis. Sidoarjo' : 'Search city'} className="flex-1" aria-label={id ? 'Cari lokasi' : 'Search location'} />
+            <Button type="button" variant="outline" size="sm" onClick={search} disabled={searching || query.trim().length < 2} className="shrink-0 gap-1.5">
+              {searching ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}{id ? 'Cari' : 'Search'}
+            </Button>
+          </div>
+
+          {results && (
+            <div className="rounded-lg border divide-y">
+              {results.length ? results.map((item) => (
+                <button key={`${item.latitude},${item.longitude}`} type="button" onClick={() => choose(item)}
+                  className="block w-full px-3 py-2 text-left text-sm hover:bg-muted/60">
+                  <span className="font-medium">{item.name}</span>
+                  <span className="block text-[11px] text-muted-foreground">{item.detail}</span>
+                </button>
+              )) : <p className="px-3 py-2 text-xs text-muted-foreground">{id ? 'Lokasi tidak ditemukan.' : 'No location found.'}</p>}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            {canUseFarm && (
+              <Button type="button" variant="ghost" size="sm" className="gap-1.5"
+                onClick={() => choose({ name: form.location || (id ? 'Lokasi farm' : 'Farm location'), latitude: farmCoords[0], longitude: farmCoords[1] })}>
+                <MapPin size={13} />{id ? 'Pakai lokasi GPS farm' : 'Use farm GPS location'}
+              </Button>
+            )}
+            {!isDefault && (
+              <Button type="button" variant="ghost" size="sm" onClick={() => setField('weatherLocation', null)}>
+                {id ? `Kembalikan ke ${DEFAULT_WEATHER_LOCATION.name}` : `Reset to ${DEFAULT_WEATHER_LOCATION.name}`}
+              </Button>
+            )}
+          </div>
+        </div>
+      </Field>
+    </Section>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────
    GENERAL TAB
 ───────────────────────────────────────────────────────────────────── */
 function GeneralTab() {
@@ -560,6 +652,8 @@ function GeneralTab() {
         )}
       </Section>
 
+      <WeatherLocationSection />
+
       <Section title={t.regional} description={t.regionalDesc}>
         <Field label={t.timezone} hint={t.timezoneHint}>
           <Select value={form.timezone} onValueChange={(v) => setField('timezone', v)}>
@@ -637,7 +731,7 @@ function AutomationTab() {
         </Field>
       </Section>
 
-      {/* Cooldown — synced to index.js COOLDOWN_MINUTES */}
+      {/* Cooldown notifikasi — pengaturan alert farm (backend) */}
       <Section title={t.cooldown} description={t.cooldownDesc} warning>
         <Field label={t.cooldownMinutes} hint={t.cooldownHint}>
           <div className="flex items-center gap-3">
@@ -663,46 +757,30 @@ function AutomationTab() {
 function NotificationsTab() {
   const lang = useLang();
   const t = T[lang].notifications;
-  const { form, setField } = useForm();
+  const { form, setField, alertMeta } = useForm();
+  const { farm, isOwner } = useFarmContext();
   const [testing, setTesting] = useState(false);
+  const canEditAlerts = Boolean(farm && isOwner);
 
+  // Pesan uji dikirim backend memakai token & chat ID yang SUDAH tersimpan untuk farm ini.
   const sendTestMessage = async () => {
-    const token  = form.telegramBotToken?.trim();
-    const chatId = form.telegramChatId?.trim();
-    if (!token || !chatId) {
-      toast.error(lang === 'id' ? 'Isi Bot Token dan Chat ID terlebih dahulu.' : 'Please fill in Bot Token and Chat ID first.');
+    if (!canEditAlerts) return;
+    if (alertMeta.dirty || !alertMeta.hasTelegramToken || !form.telegramChatId?.trim()) {
+      toast.error(lang === 'id' ? 'Simpan Bot Token dan Chat ID terlebih dahulu.' : 'Save the Bot Token and Chat ID first.');
       return;
     }
     setTesting(true);
     try {
-      const farmName = form.farmName || 'Tandurai';
-      const location = form.locationDetail || form.location || 'Farm';
-      const now = new Date().toLocaleString(lang === 'id' ? 'id-ID' : 'en-US', {
-        timeZone: 'Asia/Jakarta', dateStyle: 'medium', timeStyle: 'short',
-      });
-      const msg = lang === 'id'
-        ? `🌿 <b>${farmName}</b>\n\n✅ <b>Koneksi Telegram Berhasil!</b>\n\nSistem monitoring farm Anda terhubung dengan baik.\n\n📍 Lokasi: ${location}\n🕐 Waktu: ${now}\n\n<i>Pesan ini dikirim dari halaman Pengaturan untuk memverifikasi koneksi.</i>`
-        : `🌿 <b>${farmName}</b>\n\n✅ <b>Telegram Connected!</b>\n\nYour farm monitoring system is connected.\n\n📍 Location: ${location}\n🕐 Time: ${now}\n\n<i>This message was sent from Settings to verify the connection.</i>`;
-
-      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, text: msg, parse_mode: 'HTML' }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        toast.success(t.testSuccess);
-      } else {
-        toast.error(`${t.testFail} (${data.description || 'unknown'})`);
-      }
-    } catch {
-      toast.error(t.testFail);
+      await api.testTelegram(farm.id);
+      toast.success(t.testSuccess);
+    } catch (error) {
+      toast.error(`${t.testFail} (${error.message})`);
     } finally {
       setTesting(false);
     }
   };
 
-  // Alert threshold fields — grouped by sensor, matching index.js getAlerts()
+  // Alert threshold fields — grouped by sensor (lihat ALERT_FORM_KEYS untuk yang dievaluasi backend)
   const thresholdGroups = [
     {
       label: lang === 'id' ? '🌡️ Suhu' : '🌡️ Temperature',
@@ -753,15 +831,23 @@ function NotificationsTab() {
     <div className="space-y-5">
       {/* ── Telegram Config ── */}
       <Section title={t.telegram} description={t.telegramDesc} accent>
-        <ToggleRow label={t.telegramEnable} hint={t.telegramEnableHint} formKey="telegramEnabled" />
+        <p className="text-xs text-muted-foreground pb-2">
+          {farm
+            ? (lang === 'id'
+              ? `Telegram & ambang alert berlaku untuk farm ${farm.name}${canEditAlerts ? '' : ' — hanya owner farm yang dapat mengubahnya'}.`
+              : `Telegram & alert thresholds apply to farm ${farm.name}${canEditAlerts ? '' : ' — only the farm owner can change them'}.`)
+            : (lang === 'id' ? 'Pilih farm untuk mengatur Telegram & ambang alert.' : 'Select a farm to configure Telegram & alert thresholds.')}
+        </p>
+        <ToggleRow label={t.telegramEnable} hint={t.telegramEnableHint} formKey="telegramEnabled" disabled={!canEditAlerts} />
 
         <Field label={t.botToken} hint={t.botTokenHint}>
           <Input
             value={form.telegramBotToken}
             onChange={(e) => setField('telegramBotToken', e.target.value)}
-            placeholder={t.botTokenPlaceholder}
+            placeholder={alertMeta.hasTelegramToken ? (lang === 'id' ? '•••••• tersimpan (isi untuk mengganti)' : '•••••• saved (type to replace)') : t.botTokenPlaceholder}
             type="password"
-            disabled={!form.telegramEnabled}
+            autoComplete="off"
+            disabled={!form.telegramEnabled || !canEditAlerts}
             className={`max-w-sm ${!form.telegramEnabled ? 'opacity-50' : ''}`}
           />
         </Field>
@@ -772,13 +858,13 @@ function NotificationsTab() {
               value={form.telegramChatId}
               onChange={(e) => setField('telegramChatId', e.target.value)}
               placeholder={t.chatIdPlaceholder}
-              disabled={!form.telegramEnabled}
+              disabled={!form.telegramEnabled || !canEditAlerts}
               className={`flex-1 ${!form.telegramEnabled ? 'opacity-50' : ''}`}
             />
             <Button
               type="button" variant="outline" size="sm"
               onClick={sendTestMessage}
-              disabled={!form.telegramEnabled || testing}
+              disabled={!form.telegramEnabled || testing || !canEditAlerts}
               className="shrink-0 gap-1.5"
             >
               {testing ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
@@ -798,12 +884,15 @@ function NotificationsTab() {
 
       {/* ── Alert Filters ── */}
       <Section title={t.filters} description={t.filtersDesc}>
-        <ToggleRow label={t.notifCritical}  hint={t.notifCriticalHint}  formKey="notifCritical"  badge="CRITICAL" disabled={!form.telegramEnabled} />
-        <ToggleRow label={t.notifWarning}   hint={t.notifWarningHint}   formKey="notifWarning"   badge="WARNING"  disabled={!form.telegramEnabled} />
-        <ToggleRow label={t.notifOffline}   hint={t.notifOfflineHint}   formKey="notifOffline"   disabled={!form.telegramEnabled} />
+        <ToggleRow label={t.notifCritical}  hint={t.notifCriticalHint}  formKey="notifCritical"  badge="CRITICAL" disabled={!form.telegramEnabled || !canEditAlerts} />
+        <ToggleRow label={t.notifWarning}   hint={t.notifWarningHint}   formKey="notifWarning"   badge="WARNING"  disabled={!form.telegramEnabled || !canEditAlerts} />
+        <ToggleRow label={t.notifOffline}   hint={t.notifOfflineHint}   formKey="notifOffline"   disabled={!form.telegramEnabled || !canEditAlerts} />
         <ToggleRow label={t.notifAutomation} hint={t.notifAutomationHint} formKey="notifAutomation" disabled={!form.telegramEnabled} />
         <ToggleRow label={t.notifWeekly}    hint={t.notifWeeklyHint}    formKey="notifWeekly"    disabled={!form.telegramEnabled} />
       </Section>
+
+      {/* ── Rentang optimal kumbung (status KPI, garis grafik, Farm Health Score) ── */}
+      <OptimalRangeSection canEdit={canEditAlerts} />
 
       {/* ── Threshold Groups ── */}
       <Section title={t.alertThresholds} description={t.alertThresholdsDesc} warning>
@@ -827,8 +916,8 @@ function NotificationsTab() {
                     min={min}
                     max={max}
                     onChange={(e) => setField(key, e.target.value)}
-                    disabled={!form.telegramEnabled}
-                    className={`w-[100px] ${!form.telegramEnabled ? 'opacity-50' : ''}`}
+                    disabled={!canEditAlerts}
+                    className={`w-[100px] ${!canEditAlerts ? 'opacity-50' : ''}`}
                   />
                   <span className="text-xs text-muted-foreground">{min}–{max}</span>
                 </div>
@@ -842,12 +931,73 @@ function NotificationsTab() {
 }
 
 /* ─────────────────────────────────────────────────────────────────────
+   RENTANG OPTIMAL KUMBUNG — per farm (backend alert-settings.optimal)
+───────────────────────────────────────────────────────────────────── */
+const OPTIMAL_FIELDS = [
+  { key: 'temperature', min: 'optTempMin', max: 'optTempMax', icon: Thermometer, color: 'text-orange-500', step: 0.5 },
+  { key: 'humidity',    min: 'optHumMin',  max: 'optHumMax',  icon: Droplets,    color: 'text-blue-500',   step: 1 },
+  { key: 'co2',         min: 'optCo2Min',  max: 'optCo2Max',  icon: Wind,        color: 'text-purple-500', step: 50 },
+];
+
+function OptimalRangeSection({ canEdit }) {
+  const lang = useLang();
+  const id = lang === 'id';
+  const { form, setField } = useForm();
+
+  const change = (key, value) => {
+    setField(key, value);
+    setField('optimalDefault', false);
+  };
+  const reset = () => {
+    for (const field of OPTIMAL_FIELDS) {
+      setField(field.min, String(DEFAULT_RANGES[field.key][0]));
+      setField(field.max, String(DEFAULT_RANGES[field.key][1]));
+    }
+    setField('optimalDefault', true);
+  };
+
+  return (
+    <Section
+      title={id ? 'Rentang Optimal Kumbung' : 'Optimal Growing Range'}
+      description={id
+        ? 'Dipakai untuk status KPI, garis optimal grafik Monitoring, saran Dashboard, dan Farm Health Score farm ini.'
+        : 'Used for KPI status, Monitoring chart bands, Dashboard advice and the Farm Health Score of this farm.'}
+      accent
+    >
+      {OPTIMAL_FIELDS.map(({ key, min, max, icon: Icon, color, step }) => (
+        <Field key={key} label={<span className="flex items-center gap-2"><Icon size={14} className={color} />{PARAMETERS[key].label} ({PARAMETERS[key].unit})</span>}
+          hint={id ? `Rekomendasi: ${DEFAULT_RANGES[key][0]}–${DEFAULT_RANGES[key][1]} ${PARAMETERS[key].unit}` : `Recommended: ${DEFAULT_RANGES[key][0]}–${DEFAULT_RANGES[key][1]} ${PARAMETERS[key].unit}`}>
+          <div className="flex items-center gap-2">
+            <Input type="number" step={step} value={form[min]} onChange={(e) => change(min, e.target.value)} disabled={!canEdit}
+              className={`w-[100px] ${!canEdit ? 'opacity-50' : ''}`} aria-label={`${PARAMETERS[key].label} minimum`} />
+            <span className="text-xs text-muted-foreground">{id ? 'sampai' : 'to'}</span>
+            <Input type="number" step={step} value={form[max]} onChange={(e) => change(max, e.target.value)} disabled={!canEdit}
+              className={`w-[100px] ${!canEdit ? 'opacity-50' : ''}`} aria-label={`${PARAMETERS[key].label} maksimum`} />
+          </div>
+        </Field>
+      ))}
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-3">
+        <p className="text-[11px] text-muted-foreground max-w-xl leading-relaxed">
+          {id
+            ? 'Rekomendasi bawaan: fase pembentukan tubuh buah jamur tiram putih (Pleurotus ostreatus) di kumbung tropis — suhu 22–28 °C, kelembapan udara 80–90 %, CO₂ ≤ 1000 ppm. Ambang peringatan alert harus berada di luar rentang ini.'
+            : 'Default: fruiting stage of white oyster mushroom (Pleurotus ostreatus) in tropical grow houses — 22–28 °C, 80–90 % RH, CO₂ ≤ 1000 ppm. Alert warning thresholds must lie outside this range.'}
+          {form.optimalDefault && <Badge variant="outline" className="ml-2 text-[10px]">{id ? 'memakai rekomendasi' : 'using defaults'}</Badge>}
+        </p>
+        {canEdit && !form.optimalDefault && (
+          <Button type="button" variant="outline" size="sm" onClick={reset}>{id ? 'Kembalikan ke rekomendasi' : 'Reset to defaults'}</Button>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────
    ACCOUNT TAB
 ───────────────────────────────────────────────────────────────────── */
 function AccountTab() {
   const lang = useLang();
   const t = T[lang].account;
-  const { form, setField } = useForm();
+  const { form, setField, refreshProfile } = useForm();
   const user = auth.currentUser;
 
   const [localName, setLocalName] = useState(user?.displayName || '');
@@ -861,10 +1011,8 @@ function AccountTab() {
     setUpdatingProfile(true);
     try {
       await updateProfile(user, { displayName: localName.trim() });
-      await update(ref(db, `users/${user.uid}/profile`), {
-        username: localName.trim(),
-        updatedAt: Date.now(),
-      });
+      await api.updateMe({ username: localName.trim() });
+      await refreshProfile();
       toast.success(lang === 'id' ? 'Profil berhasil diperbarui!' : 'Profile updated!');
     } catch (err) {
       toast.error(err.message || (lang === 'id' ? 'Gagal memperbarui profil.' : 'Failed to update profile.'));
@@ -1042,8 +1190,7 @@ function SecurityTab() {
 
 /* ─────────────────────────────────────────────────────────────────────
    INITIAL FORM STATE
-   — Alert thresholds match default values in index.js getAlerts()
-   — Cloud Functions reads: tumbara/config/alerts/{uid} OR global fallback
+   — Ambang alert, cooldown, & Telegram dimuat dari pengaturan alert farm (backend)
 ───────────────────────────────────────────────────────────────────── */
 const INITIAL_FORM = {
   // General
@@ -1052,6 +1199,7 @@ const INITIAL_FORM = {
   location: 'Surabaya, East Java',
   locationCoords: '',
   locationDetail: '',
+  weatherLocation: null,          // { name, latitude, longitude } — null = lokasi bawaan
   timezone: 'wib',
   language: 'id',
   // Automation
@@ -1064,7 +1212,7 @@ const INITIAL_FORM = {
   co2Threshold: '1200',
   activeFrom: '06:00',
   activeTo: '22:00',
-  cooldownMinutes: '10',          // synced → index.js COOLDOWN_MINUTES
+  cooldownMinutes: '10',          // pengaturan alert farm (backend)
   // Notifications
   telegramEnabled: false,
   telegramBotToken: '',
@@ -1074,15 +1222,20 @@ const INITIAL_FORM = {
   notifOffline: true,
   notifAutomation: false,
   notifWeekly: true,
-  // Alert thresholds — synced → index.js getAlerts()
+  // Alert thresholds — sebagian dievaluasi backend (ALERT_FORM_KEYS)
   alertTempCriticalHigh: '33',    // temp > 33  → CRITICAL
   alertTempWarnHigh:     '30',    // temp > 30  → WARNING
   alertTempWarnLow:      '24',    // temp < 24  → WARNING
   alertTempCriticalLow:  '20',    // temp < 20  → CRITICAL
   alertHumWarnLow:       '60',    // hum  < 60  → WARNING
   alertHumWarnHigh:      '90',    // hum  > 90  → WARNING
-  alertCo2Critical:      '800',   // co2  > 800 → CRITICAL
-  alertCo2Warn:          '600',   // co2  > 600 → WARNING
+  alertCo2Critical:      '2500',  // co2  > 2500 → CRITICAL
+  alertCo2Warn:          '1500',  // co2  > 1500 → WARNING
+  // Rentang optimal farm (backend alert-settings.optimal); optimalDefault = pakai rekomendasi bawaan
+  optimalDefault: true,
+  optTempMin: String(DEFAULT_RANGES.temperature[0]), optTempMax: String(DEFAULT_RANGES.temperature[1]),
+  optHumMin:  String(DEFAULT_RANGES.humidity[0]),    optHumMax:  String(DEFAULT_RANGES.humidity[1]),
+  optCo2Min:  String(DEFAULT_RANGES.co2[0]),         optCo2Max:  String(DEFAULT_RANGES.co2[1]),
   alertMoistCriticalLow: '45',    // moist < 45 → CRITICAL
   alertMoistWarnLow:     '60',    // moist < 60 → WARNING
   alertMoistWarnHigh:    '85',    // moist > 85 → WARNING
@@ -1096,12 +1249,75 @@ const INITIAL_FORM = {
 };
 
 /* ─────────────────────────────────────────────────────────────────────
+   ALERT FARM ↔ FORM
+   Backend mengevaluasi suhu tinggi, kelembapan rendah, dan CO₂ tinggi. Ambang lain di form
+   (suhu rendah, kelembapan tinggi, kelembapan media, air) tetap preferensi tampilan user.
+───────────────────────────────────────────────────────────────────── */
+const ALERT_FORM_KEYS = [
+  'alertTempWarnHigh', 'alertTempCriticalHigh', 'alertHumWarnLow', 'alertCo2Warn', 'alertCo2Critical',
+  'cooldownMinutes', 'telegramEnabled', 'telegramChatId', 'notifCritical', 'notifWarning', 'notifOffline',
+  'optimalDefault', 'optTempMin', 'optTempMax', 'optHumMin', 'optHumMax', 'optCo2Min', 'optCo2Max',
+];
+
+function alertFormFields(settings) {
+  if (!settings) return {};
+  const { thresholds, notify } = settings;
+  return {
+    alertTempWarnHigh: String(thresholds.temperature.warning),
+    alertTempCriticalHigh: String(thresholds.temperature.critical),
+    alertHumWarnLow: String(thresholds.humidity.warning),
+    alertCo2Warn: String(thresholds.co2.warning),
+    alertCo2Critical: String(thresholds.co2.critical),
+    cooldownMinutes: String(settings.cooldownMinutes),
+    telegramEnabled: settings.telegramEnabled,
+    telegramChatId: settings.telegramChatId || '',
+    notifCritical: notify.critical !== false,
+    notifWarning: notify.warning !== false,
+    notifOffline: notify.offline !== false,
+    optimalDefault: settings.optimalIsDefault !== false,
+    ...(settings.optimal ? {
+      optTempMin: String(settings.optimal.temperature.min), optTempMax: String(settings.optimal.temperature.max),
+      optHumMin: String(settings.optimal.humidity.min), optHumMax: String(settings.optimal.humidity.max),
+      optCo2Min: String(settings.optimal.co2.min), optCo2Max: String(settings.optimal.co2.max),
+    } : {}),
+  };
+}
+
+function alertSettingsPayload(form, current) {
+  const humidityWarning = Number(form.alertHumWarnLow);
+  // Form hanya punya ambang peringatan kelembapan; ambang kritis farm dipertahankan bila masih di bawahnya.
+  const currentCritical = Number(current?.thresholds?.humidity?.critical ?? 60);
+  return {
+    thresholds: {
+      temperature: { warning: Number(form.alertTempWarnHigh), critical: Number(form.alertTempCriticalHigh) },
+      humidity: { warning: humidityWarning, critical: currentCritical < humidityWarning ? currentCritical : Math.max(0, humidityWarning - 10) },
+      co2: { warning: Number(form.alertCo2Warn), critical: Number(form.alertCo2Critical) },
+    },
+    // null = kembali ke rekomendasi bawaan backend
+    optimal: form.optimalDefault ? null : {
+      temperature: { min: Number(form.optTempMin), max: Number(form.optTempMax) },
+      humidity: { min: Number(form.optHumMin), max: Number(form.optHumMax) },
+      co2: { min: Number(form.optCo2Min), max: Number(form.optCo2Max) },
+    },
+    notify: { critical: form.notifCritical, warning: form.notifWarning, offline: form.notifOffline },
+    cooldownMinutes: Number(form.cooldownMinutes),
+    telegramEnabled: form.telegramEnabled,
+    telegramChatId: form.telegramChatId.trim(),
+    ...(form.telegramBotToken.trim() ? { telegramBotToken: form.telegramBotToken.trim() } : {}),
+  };
+}
+
+/* ─────────────────────────────────────────────────────────────────────
    MAIN PAGE
 ───────────────────────────────────────────────────────────────────── */
 export default function SettingsPage() {
   const [form, setForm]           = useState(INITIAL_FORM);
   const [saved, setSaved]         = useState(INITIAL_FORM);
-  const [activeTab, setActiveTab] = useState('general');
+  // Tab bisa dibuka langsung lewat URL, mis. /settings?tab=notifications (dari halaman Peringatan).
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(() => (
+    ['general', 'automation', 'notifications', 'account', 'security'].includes(searchParams.get('tab')) ? searchParams.get('tab') : 'general'
+  ));
   const [isSaving, setIsSaving]   = useState(false);
   const [showSaved, setShowSaved] = useState(false);
   const [loading, setLoading]     = useState(true);
@@ -1112,62 +1328,54 @@ export default function SettingsPage() {
 
   const setField = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
 
-  // Load settings from Firebase
+  const { farm, isOwner, refreshProfile, refreshFarmSettings } = useFarmContext();
+  const [alertSettings, setAlertSettings] = useState(null);
+
+  // Preferensi user (backend) + ambang alert & Telegram farm terpilih (token tidak pernah dikirim balik).
   useEffect(() => {
     if (!user) return;
-    get(ref(db, `users/${user.uid}/settings`)).then((snap) => {
-      if (snap.exists()) {
-        const merged = { ...INITIAL_FORM, ...snap.val() };
+    let active = true;
+    Promise.all([api.settings(), farm ? api.alertSettings(farm.id).catch(() => null) : null])
+      .then(([settings, farmAlerts]) => {
+        if (!active) return;
+        const merged = { ...INITIAL_FORM, ...settings, ...alertFormFields(farmAlerts), telegramBotToken: '' };
+        setAlertSettings(farmAlerts);
         setForm(merged);
         setSaved(merged);
-      }
-      setLoading(false);
-    }).catch(() => setLoading(false));
-  }, [user]);
+      })
+      .catch(error => toast.error(error.message))
+      .finally(() => active && setLoading(false));
+    return () => { active = false; };
+  }, [user, farm]);
 
   const isDirty = JSON.stringify(form) !== JSON.stringify(saved);
+  const alertDirty = ALERT_FORM_KEYS.some(key => form[key] !== saved[key]);
 
   const handleSave = async (e) => {
     e.preventDefault();
     if (!user) return;
     setIsSaving(true);
     try {
-      // Save full settings
-      await set(ref(db, `users/${user.uid}/settings`), form);
+      // Preferensi user (backend membuang field rahasia seperti token).
+      const { telegramBotToken, ...preferences } = form;
+      await api.saveSettings(preferences);
 
-      // Also publish alert thresholds to a shared path read by Cloud Functions
-      // Path: tumbara/config/alerts  (global, readable by index.js)
-      await set(ref(db, 'tumbara/config/alerts'), {
-        tempCriticalHigh: Number(form.alertTempCriticalHigh),
-        tempWarnHigh:     Number(form.alertTempWarnHigh),
-        tempWarnLow:      Number(form.alertTempWarnLow),
-        tempCriticalLow:  Number(form.alertTempCriticalLow),
-        humWarnLow:       Number(form.alertHumWarnLow),
-        humWarnHigh:      Number(form.alertHumWarnHigh),
-        co2Critical:      Number(form.alertCo2Critical),
-        co2Warn:          Number(form.alertCo2Warn),
-        moistCriticalLow: Number(form.alertMoistCriticalLow),
-        moistWarnLow:     Number(form.alertMoistWarnLow),
-        moistWarnHigh:    Number(form.alertMoistWarnHigh),
-        waterCritical:    Number(form.alertWaterCritical),
-        waterWarn:        Number(form.alertWaterWarn),
-        cooldownMinutes:  Number(form.cooldownMinutes),
-        telegramEnabled:  form.telegramEnabled,
-        telegramToken:    form.telegramBotToken,
-        telegramChatId:   form.telegramChatId,
-        notifCritical:    form.notifCritical,
-        notifWarning:     form.notifWarning,
-        notifOffline:     form.notifOffline,
-        notifAutomation:  form.notifAutomation,
-        updatedAt:        Date.now(),
-      });
+      // Ambang alert & Telegram berlaku per farm dan hanya owner yang boleh mengubah.
+      let next = { ...form, telegramBotToken: '' };
+      if (farm && isOwner && (alertDirty || telegramBotToken.trim())) {
+        const updated = await api.saveAlertSettings(farm.id, alertSettingsPayload(form, alertSettings));
+        setAlertSettings(updated);
+        next = { ...next, ...alertFormFields(updated) };
+        refreshFarmSettings();
+      }
 
-      setSaved(form);
+      setForm(next);
+      setSaved(next);
       setShowSaved(true);
       toast.success(t.savedToast);
       setTimeout(() => setShowSaved(false), 2500);
     } catch (err) {
-      toast.error(lang === 'id' ? 'Gagal menyimpan. Coba lagi.' : 'Failed to save. Please try again.');
+      toast.error(err.message || (lang === 'id' ? 'Gagal menyimpan. Coba lagi.' : 'Failed to save. Please try again.'));
     } finally {
       setIsSaving(false);
     }
@@ -1204,7 +1412,7 @@ export default function SettingsPage() {
 
   return (
     <LangCtx.Provider value={lang}>
-      <FormCtx.Provider value={{ form, setField }}>
+      <FormCtx.Provider value={{ form, setField, refreshProfile, alertMeta: { hasTelegramToken: Boolean(alertSettings?.hasTelegramToken), dirty: alertDirty } }}>
         <Helmet><title>{t.pageTitle}</title></Helmet>
 
         <form onSubmit={handleSave} className="max-w-5xl mx-auto pb-24 space-y-6">

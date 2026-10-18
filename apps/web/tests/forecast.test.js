@@ -25,6 +25,7 @@ test('history is normalized and sorted newest first', () => {
 
 test('official dashboard forecast must come from trained batch worker output', () => {
   const official = { forecastType: 'batch_total', forecastMethod: 'trained-batch-model-v1', input: { batchId: 'B-01' } };
+  assert.equal(isOfficialBatchForecast({ ...official, forecastMethod: 'trained-batch-model-v3-condition-history' }), true, 'model histori kondisi v3');
   assert.equal(isOfficialBatchForecast(official), true);
   assert.equal(isOfficialBatchForecast({ forecastType: 'batch_total', model: { forecastMethod: 'trained-batch-model-v1' }, input: { batchId: 'B-02' } }), true);
   assert.equal(isOfficialBatchForecast({ ...official, forecastMethod: 'browser-calculation' }), false);

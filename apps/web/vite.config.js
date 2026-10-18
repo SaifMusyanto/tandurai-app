@@ -297,9 +297,8 @@ export default defineConfig({
 	server: {
 		port: 3000,
 		cors: true,
-		headers: {
-			'Cross-Origin-Embedder-Policy': 'credentialless',
-		},
+		// Tanpa Cross-Origin-Embedder-Policy: header itu memutus iframe/popup Firebase Auth
+		// sehingga login Google selesai di popup tetapi hasilnya tidak sampai ke aplikasi.
 		allowedHosts: [
 			'.app-preview.com',
 			'.app-preview.io',

@@ -73,7 +73,7 @@ def test_idempotency_key_does_not_depend_on_generation_time():
     two = build_forecast(FakeRuntime(), payload(), {"mode": "observed"}, generated_at=999)
     assert one["idempotencyKey"] == two["idempotencyKey"]
     assert one["input"]["featureHash"] == two["input"]["featureHash"]
-    assert one["idempotencyKey"].endswith("batch-ai-v3")
+    assert one["idempotencyKey"].endswith("batch-ai-v4")
 
 
 def test_idempotency_key_is_unique_per_batch():
