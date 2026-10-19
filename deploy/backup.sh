@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Backup PostgreSQL harian. Pasang di crontab user:
-#   0 2 * * * /home/<user>/tandurai-app/deploy/backup.sh >> /home/<user>/tandurai-backup.log 2>&1
+# Backup PostgreSQL harian. Pasang di crontab root (sudo crontab -e):
+#   0 2 * * * BACKUP_DIR=/home/service/tandurai-backups /home/service/tandurai/deploy/backup.sh >> /var/log/tandurai-backup.log 2>&1
 # Opsional: BACKUP_BUCKET=gs://nama-bucket  → salinan juga diunggah ke Cloud Storage.
 set -euo pipefail
 cd "$(dirname "$0")"

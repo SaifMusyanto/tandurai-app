@@ -1,48 +1,71 @@
-# Panduan Deploy Tandurai — 1 VM GCP + Docker
+# Panduan Deploy Tandurai — VM GCP `aitoma-prod` (Docker + Nginx Proxy Manager)
 
-Seluruh sistem (dashboard, API, broker MQTT, PostgreSQL, AI worker + model) berjalan di **satu VM Google Cloud** dalam container Docker. Setelah persiapan awal, deploy dan update cukup **satu perintah**:
+Tandurai (dashboard, API, broker MQTT, PostgreSQL, AI worker + model) dipasang sebagai satu project Docker Compose di **VM produksi Aitoma yang sudah berjalan** (`aitoma-prod`), berdampingan dengan project lain. VM tidak perlu dibuat baru. Setelah persiapan awal, deploy dan update cukup **satu perintah**:
 
 ```bash
-bash deploy/deploy.sh
+sudo bash deploy/deploy.sh
 ```
 
-> Panduan ini menggantikan cara systemd di [`PANDUAN_DEPLOY.md`](PANDUAN_DEPLOY.md). Bagian integrasi hardware (§12 di sana) tetap berlaku; bedanya hanya cara menjalankan perintah server (lihat [§9](#9-perintah-server-versi-docker)).
+> Panduan ini menggantikan cara systemd di [`PANDUAN_DEPLOY.md`](PANDUAN_DEPLOY.md). Bagian integrasi hardware (§12 di sana) tetap berlaku; bedanya hanya cara menjalankan perintah server (lihat [§8](#8-perintah-server)).
 
 ---
 
 ## 0. Gambaran
 
+Port 80/443 di VM sudah dipegang container **Nginx Proxy Manager** (NPM) yang melayani semua project. Tandurai tidak membuka port 80/443 sendiri; NPM meneruskan domain Tandurai ke container `web` lewat network Docker `shared_network`.
+
 ```
-                       ┌──────────────────────── VM GCP (Docker Compose) ────────────────────────┐
-Browser ──HTTPS 443──▶ │ web (Caddy) ── /api ──▶ api :8787 ──▶ postgres :5432                    │
-                       │   │ sertifikat Let's Encrypt otomatis   ▲  │ MQTT 1883 (internal)          │
-                       │   └── caddy-data (volume) ──┐           │  ▼                               │
-ESP32 ──MQTTS 8883───▶ │                    broker (aedes) ◀─────┘                                 │
-                       │                    worker (Python + ai_model) ──token──▶ api              │
-                       └──────────────────────────────────────────────────────────────────────────┘
+                          ┌──────────────────────────── VM aitoma-prod ────────────────────────────────┐
+Browser ──HTTPS 443──▶ NPM (TLS dashboard) ──http──▶ web/Caddy ── /api ──▶ api :8787 ──▶ postgres :5432 │
+Let's Encrypt ─HTTP 80─▶ NPM ──http──▶ web/Caddy → sertifikat RSA MQTT_DOMAIN     ▲  │ MQTT 1883 (internal)
+                          │                 └── caddy-data (volume) ──┐           │  ▼                  │
+ESP32 ──MQTTS 8883──────────────────────────────────────────────▶ broker (aedes) ◀┘                    │
+                          │                                 worker (Python + ai_model) ──token──▶ api   │
+                          └──────────────────── project lain (core, dashboard, cmms, …) ───────────────┘
 ```
 
 | Container | Isi | Dibangun dari |
 |---|---|---|
-| `web` | Caddy: HTTPS otomatis, file dashboard, reverse proxy `/api` | `deploy/Dockerfile.web` (build `apps/web`) |
+| `web` | Caddy: file dashboard, reverse proxy `/api`, ambil sertifikat MQTT | `deploy/Dockerfile.web` (build `apps/web`) |
 | `api` | backend REST + SSE, migration otomatis | `deploy/Dockerfile.api` |
 | `broker` | broker MQTT; TLS 8883 memakai sertifikat dari Caddy | image yang sama dengan `api` |
 | `worker` | AI worker + model (`ai_model/`) | `deploy/Dockerfile.worker` |
-| `postgres` | PostgreSQL 16 | image resmi |
+| `postgres` | PostgreSQL 16 khusus Tandurai | image resmi |
 
-**Model AI sudah digabung ke repo.** Folder `ai_model/` berisi salinan runtime dari `Modul AI Aitoma` (paket `tandurai_harvest_ai`, artefak `.joblib`, dan tabel referensi sintetis, ±7 MB). Folder `Modul AI Aitoma` tidak perlu lagi disalin ke server; folder itu tetap dipakai untuk riset & training. Setelah training ulang, jalankan `tools/sync-ai-model.ps1` (lihat `ai_model/README.md`).
+**Port.** Tandurai hanya membuka **8883/tcp** di host. PostgreSQL, API, dan MQTT 1883 Tandurai hanya ada di network internal Docker, jadi tidak bentrok dengan port 1883/5432 yang dibuka NPM untuk project lain.
 
-Hanya port **22, 80, 443, 8883** yang terbuka. PostgreSQL, API, dan MQTT 1883 hanya ada di jaringan internal Docker.
+**Sertifikat.** HTTPS dashboard diurus NPM. Sertifikat `MQTT_DOMAIN` sengaja **tetap diambil Caddy** (NPM hanya meneruskan port 80 domain itu): Caddy dipaksa memakai kunci **RSA** yang berantai ke **ISRG Root X1**, sama dengan CA di firmware ESP32, dan broker membacanya dari volume `caddy-data`.
 
-> **Deploy ke VM yang sudah dipakai project lain** (port 80/443 sudah dipegang Nginx Proxy Manager)? Ikuti [§14](#14-vm-bersama-dengan-nginx-proxy-manager); langkah 3 (buat VM) dan `setup-vm.sh` dilewati.
+**Nama.** Di `shared_network` container `web` hanya dikenal sebagai `tandurai-web`, dan Caddy memanggil API lewat `tandurai-api`, sehingga tidak bentrok dengan service `web`/`api` milik project lain. Konfigurasi ini ada di `deploy/docker-compose.npm.yml`, aktif lewat `COMPOSE_FILE` di `deploy/.env`.
+
+**Model AI sudah digabung ke repo.** Folder `ai_model/` berisi salinan runtime dari `Modul AI Aitoma` (±7 MB). Setelah training ulang, jalankan `tools/sync-ai-model.ps1` (lihat `ai_model/README.md`).
 
 ---
 
-## 1. Kebutuhan resource
+## 1. Cek kondisi VM (sebelum pasang)
 
-### Pemakaian per container
+SSH ke VM, lalu:
 
-Diukur dari stack ini berjalan lokal (idle + satu kali hitung forecast). Angka produksi bertambah sesuai jumlah gateway dan pengguna.
+```bash
+# 8883 harus kosong (80/443 memang milik NPM)
+sudo ss -tulpn | grep -E ':(80|443|8883)\b'
+
+# Network NPM: harus "shared_network"
+sudo docker inspect nginx-proxy-manager --format '{{json .NetworkSettings.Networks}}'
+
+# Nama project / volume "tandurai" belum dipakai
+sudo docker compose ls
+sudo docker volume ls | grep tandurai
+
+# Kapasitas: RAM, swap, disk, pemakaian project lain
+free -h
+df -h /
+sudo docker stats --no-stream
+```
+
+Hasil cek 19-10-2026: 80/443 dipakai `nginx-proxy-manager`, 8883 kosong, network `shared_network`, belum ada project/volume `tandurai`.
+
+### Kebutuhan resource Tandurai
 
 | Container | RAM idle | RAM puncak | Batas (`mem_limit`) | Ukuran image |
 |---|---:|---:|---:|---:|
@@ -51,144 +74,94 @@ Diukur dari stack ini berjalan lokal (idle + satu kali hitung forecast). Angka p
 | broker | ±30 MB | — | 384 MB | (sama dengan api) |
 | worker | ±100 MB | ±270 MB (model dimuat) | 768 MB | ±740 MB |
 | web (Caddy) | ±15 MB | — | 256 MB | ±85 MB |
-| **Total** | **±250 MB** | | | **±1,7 GB** |
+| **Total** | **±250 MB** | | **±2,4 GB** | **±1,7 GB** |
 
-Saat **build** (`deploy.sh`), `vite build` dashboard butuh tambahan ±1–1,5 GB RAM sesaat. Swap 2 GB dari `setup-vm.sh` mencegah VM kehabisan memori.
-
-### Pertumbuhan data
-
-- Histori telemetry disimpan 1 baris per sensor per 10 menit selama 180 hari → ±26 rb baris/sensor ≈ **5–8 MB per sensor** (termasuk indeks).
-- 50 sensor ≈ 0,4 GB; 200 sensor ≈ 1,5 GB. Log container dibatasi 10 MB × 3 per container.
-- Backup `pg_dump` terkompresi biasanya < 30% ukuran database.
-
-### Rekomendasi VM
-
-| Skala | Tipe mesin | vCPU / RAM | Disk | Estimasi biaya* |
-|---|---|---|---|---|
-| Pilot (≤ 10 gateway, ≤ 20 pengguna) | **e2-medium** ✅ | 2 vCPU (shared) / 4 GB | 30 GB pd-balanced | ±US$ 30–40/bulan |
-| Produksi kecil (≤ 50 gateway) | e2-standard-2 | 2 vCPU / 8 GB | 50 GB pd-balanced | ±US$ 60–75/bulan |
-| Minimum absolut (uji coba) | e2-small | 2 vCPU (shared) / 2 GB | 30 GB | ±US$ 15–20/bulan — build lambat, mengandalkan swap |
-
-\*Region **asia-southeast2 (Jakarta)**, on-demand, termasuk disk dan IP statis (±US$ 3–4/bulan). Harga Jakarta lebih mahal ±20–30% dibanding `us-central1`. **Cek angka pasti di [Google Cloud Pricing Calculator](https://cloud.google.com/products/calculator)** sebelum mengajukan anggaran; *committed use discount* 1 tahun memotong ±37%.
-
-Stack idle hanya ±250 MB, jadi e2-small sebenarnya cukup untuk *menjalankan* aplikasi. Yang berat adalah *build* dashboard dan cache PostgreSQL saat data membesar. Rekomendasi: mulai dengan **e2-medium + 30 GB**. Naikkan ke e2-standard-2 (cukup *stop → edit machine type → start*, data tetap) bila `docker stats` menunjukkan RAM terpakai > 75% terus-menerus.
+- Saat **build** (`deploy.sh`), `vite build` dashboard butuh tambahan **±1–1,5 GB RAM sesaat**. Kalau `free -h` menunjukkan RAM tersedia < 2 GB dan swap 0, minta admin VM menambah swap (atau jalankan build di luar jam sibuk), supaya project lain tidak ikut terganggu.
+- Disk: siapkan ±3 GB untuk image + build cache, ditambah data telemetry **5–8 MB per sensor** (180 hari) dan backup.
 
 ---
 
 ## 2. Siapkan repo (di laptop)
 
-Pastikan perubahan ini sudah di-commit dan di-push, termasuk folder `ai_model/` dan `deploy/`:
-
-```powershell
-cd jamur
-git add ai_model deploy .dockerignore .gitattributes tools/sync-ai-model.ps1 docs/PANDUAN_DEPLOY_DOCKER_GCP.md local_ai_worker
-git commit -m "deploy: satu VM docker compose + model AI digabung"
-git push
-```
+Pastikan semua perubahan sudah di-commit dan di-push ke branch **`develop`** (branch yang dipakai VM).
 
 `deploy/.env` dan semua `.env` lain **tidak** ikut ke Git maupun image Docker (`.gitignore` + `.dockerignore`).
 
 ---
 
-## 3. Buat VM di GCP
+## 3. DNS & firewall
 
-Bisa lewat Console (**Compute Engine → VM instances → Create**) atau Cloud Shell. Versi `gcloud`:
+### DNS
 
-```bash
-PROJECT=<ID_PROJECT_GCP>
-ZONE=asia-southeast2-a
-gcloud config set project $PROJECT
-gcloud services enable compute.googleapis.com
+Arahkan dua record **A** ke IP eksternal `aitoma-prod` (cek di Console *Compute Engine → VM instances*, atau `curl -s ifconfig.me` dari VM):
 
-# IP statis (agar DNS tidak berubah saat VM restart)
-gcloud compute addresses create tandurai-ip --region=asia-southeast2
-
-# VM
-gcloud compute instances create tandurai \
-  --zone=$ZONE \
-  --machine-type=e2-medium \
-  --image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud \
-  --boot-disk-size=30GB --boot-disk-type=pd-balanced \
-  --address=tandurai-ip \
-  --tags=tandurai-web,tandurai-mqtt
-
-# Firewall: HTTP/HTTPS (+HTTP/3) dan MQTT TLS. SSH (22) sudah dibuka rule bawaan "default-allow-ssh".
-gcloud compute firewall-rules create tandurai-web \
-  --allow=tcp:80,tcp:443,udp:443 --target-tags=tandurai-web
-gcloud compute firewall-rules create tandurai-mqtt \
-  --allow=tcp:8883 --target-tags=tandurai-mqtt
-
-gcloud compute addresses describe tandurai-ip --region=asia-southeast2 --format='value(address)'
+```
+dashboard.tandurai.id   A   <IP_aitoma-prod>
+mqtt.tandurai.id        A   <IP_aitoma-prod>
 ```
 
-Catat IP yang muncul.
+Tunggu sampai `nslookup mqtt.tandurai.id` menjawab IP tersebut **sebelum §6**, karena Caddy langsung meminta sertifikat saat proxy host dibuat.
 
-> Lewat Console: pilih region `asia-southeast2`, machine `e2-medium`, boot disk **Ubuntu 24.04 LTS** 30 GB *Balanced*, centang **Allow HTTP/HTTPS traffic**, lalu di *Networking → External IPv4* pilih **Reserve static**. Tambahkan rule firewall untuk `tcp:8883` di **VPC network → Firewall**.
+### Firewall GCP
+
+Port 80/443 sudah terbuka untuk NPM. Yang perlu ditambah hanya **8883/tcp** untuk MQTT TLS:
+
+```bash
+gcloud compute instances list --filter="name~aitoma-prod" --format="table(name,zone,tags.items)"
+gcloud compute firewall-rules create tandurai-mqtt --allow=tcp:8883 --target-tags=tandurai-mqtt
+gcloud compute instances add-tags aitoma-prod --zone=<zona> --tags=tandurai-mqtt
+```
+
+> Lewat Console: **VPC network → Firewall → Create firewall rule**, target tag `tandurai-mqtt`, protokol `tcp:8883`; lalu tambahkan tag itu di VM (*Edit → Network tags*).
 
 ---
 
-## 4. DNS
+## 4. Pasang repo & isi `deploy/.env`
 
-Di pengelola domain, buat dua record **A** ke IP statis tadi:
-
-```
-dashboard.tandurai.id   A   <IP_STATIS>
-mqtt.tandurai.id        A   <IP_STATIS>
-```
-
-Tunggu sampai `nslookup dashboard.tandurai.id` menjawab IP tersebut. **DNS harus sudah benar sebelum langkah 7**, karena Caddy langsung meminta sertifikat Let's Encrypt saat start.
-
----
-
-## 5. Persiapan VM (sekali saja)
+Project lain di VM ini ada di `/home/service/<project>`; Tandurai mengikuti pola yang sama. User `info` belum masuk grup `docker`, jadi semua perintah memakai `sudo` dan repo dimiliki root (jangan campur `git` tanpa sudo dengan `sudo bash deploy/deploy.sh`, karena Git menolak repo milik user lain).
 
 ```bash
-gcloud compute ssh tandurai --zone=asia-southeast2-a     # atau tombol SSH di Console
-
-git clone https://github.com/SaifMusyanto/tandurai-app.git ~/tandurai-app
-cd ~/tandurai-app
-sudo bash deploy/setup-vm.sh      # Docker, Compose, swap 2 GB, zona waktu
-exit                               # logout-login agar grup docker aktif
-```
-
-Repo private? Pakai *deploy key* (SSH key read-only di GitHub → Settings → Deploy keys) atau *personal access token* saat `git clone`.
-
----
-
-## 6. Isi konfigurasi `deploy/.env`
-
-```bash
-gcloud compute ssh tandurai --zone=asia-southeast2-a
-cd ~/tandurai-app
-cp deploy/.env.example deploy/.env
+sudo git clone -b develop https://github.com/SaifMusyanto/tandurai-app.git /home/service/tandurai
+cd /home/service/tandurai
+sudo cp deploy/.env.example deploy/.env
 for k in POSTGRES_PASSWORD MQTT_PASSWORD WORKER_TOKEN; do
-  sed -i "s/^$k=.*/$k=$(openssl rand -hex 32)/" deploy/.env
+  sudo sed -i "s/^$k=.*/$k=$(openssl rand -hex 32)/" deploy/.env
 done
-nano deploy/.env
+sudo nano deploy/.env
 ```
+
+Repo private? Pakai *personal access token* saat `git clone`, atau *deploy key* (SSH key read-only di GitHub → Settings → Deploy keys) milik root.
 
 Yang wajib diisi manual:
 
 | Variabel | Isi |
 |---|---|
-| `DASHBOARD_DOMAIN`, `MQTT_DOMAIN` | domain dari langkah 4 |
-| `ACME_EMAIL` | email untuk Let's Encrypt |
+| `DASHBOARD_DOMAIN`, `MQTT_DOMAIN` | domain dari §3 |
+| `ACME_EMAIL` | email untuk Let's Encrypt (sertifikat MQTT) |
 | `ADMIN_EMAILS` | email admin Tandurai (pisahkan koma) |
 | `VITE_FIREBASE_*` | dari Firebase Console → Project settings → *Your apps* (Web). Nilainya publik |
 
-`POSTGRES_PASSWORD`, `MQTT_PASSWORD`, dan `WORKER_TOKEN` sudah terisi acak oleh perintah di atas. Nilai ini dipakai bersama oleh semua container, jadi tidak ada lagi yang perlu disamakan manual antar-file `.env`.
+Biarkan dua baris ini seperti di `.env.example`; keduanya yang membuat Tandurai berjalan di belakang NPM:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:docker-compose.npm.yml
+NPM_NETWORK=shared_network
+```
+
+`POSTGRES_PASSWORD`, `MQTT_PASSWORD`, dan `WORKER_TOKEN` sudah terisi acak oleh perintah di atas dan dipakai bersama oleh semua container.
 
 Di **Firebase Console → Authentication → Settings → Authorized domains**, tambahkan `dashboard.tandurai.id`.
 
 ---
 
-## 7. Deploy
+## 5. Deploy
 
 ```bash
-bash deploy/deploy.sh
+cd /home/service/tandurai
+sudo bash deploy/deploy.sh
 ```
 
-Skrip ini: `git pull` → build semua image → start/restart container → hapus image lama → tunggu API sehat → tampilkan status. Build pertama ±5–10 menit di e2-medium; update berikutnya lebih cepat karena cache.
+Skrip ini: `git pull` → build semua image → start/restart container Tandurai → hapus image *dangling* → tunggu API sehat → tampilkan status. Project lain tidak disentuh. Build pertama ±5–10 menit.
 
 Hasil yang diharapkan:
 
@@ -199,176 +172,24 @@ tandurai-broker-1   tandurai-api:latest      Up
 tandurai-postgres-1 postgres:16-alpine       Up (healthy)
 tandurai-web-1      tandurai-web:latest      Up
 tandurai-worker-1   tandurai-worker:latest   Up
-health: {"ok":true,"db":true,"mqtt":true,...}
+health: {"ok":true,"db":true,"mqtt":false,...}
 ```
 
-Pada start pertama, broker menulis `menunggu sertifikat TLS dari Caddy` beberapa detik sampai Caddy selesai mengambil sertifikat untuk `MQTT_DOMAIN`; selama itu `mqtt:false`. Ini normal.
-
-Buka `https://dashboard.tandurai.id`, login dengan email di `ADMIN_EMAILS`, lalu lanjutkan isi data awal seperti di §11 `PANDUAN_DEPLOY.md`.
+`mqtt:false` dan log broker `menunggu sertifikat TLS dari Caddy` masih normal di tahap ini: sertifikat MQTT baru bisa diambil setelah proxy host NPM dibuat (§6).
 
 ---
 
-## 8. Update aplikasi
+## 6. Proxy Host di Nginx Proxy Manager
 
-Di laptop: commit & push. Di VM:
+Buka panel admin NPM (port admin 81 dipetakan ke host **82**: `http://<IP_aitoma-prod>:82`, atau lewat tunnel SSH bila port itu tidak dibuka ke publik), lalu **Hosts → Proxy Hosts → Add Proxy Host**.
 
-```bash
-cd ~/tandurai-app && bash deploy/deploy.sh
-```
-
-Migration database berjalan otomatis saat `api` start. Model AI baru cukup di-sync ke `ai_model/` (lihat `ai_model/README.md`), commit, lalu jalankan perintah yang sama.
-
----
-
-## 9. Perintah server versi Docker
-
-Jalankan dari `~/tandurai-app/deploy`:
-
-| Kebutuhan | Perintah |
-|---|---|
-| Status | `docker compose ps` |
-| Pemakaian RAM/CPU | `docker stats --no-stream` |
-| Log semua / satu layanan | `docker compose logs -f` · `docker compose logs -f broker` |
-| Restart satu layanan | `docker compose restart worker` |
-| Health API | `curl -s https://dashboard.tandurai.id/api/health` |
-| Health AI worker | `docker compose exec worker python -m worker health` |
-| Registrasi perangkat massal | `docker compose run --rm -v ~/provisioning:/out api node apps/api/tools/factory-provision.mjs --count 20 --out-dir /out` |
-| Cek gateway | `docker compose exec api node apps/api/tools/device-check.mjs --hw-uid TDR-XXXXXXXXXXXX --seconds 120` |
-| Masuk database | `docker compose exec postgres psql -U tandurai tandurai_iot` |
-| Matikan semua | `docker compose down` (data aman di volume) |
-
-> Jangan pernah `docker compose down -v` — opsi `-v` menghapus volume database dan sertifikat.
-
-File hasil `factory-provision` di `~/provisioning` berisi `deviceSecret`: simpan aman, lalu hapus dari VM.
-
----
-
-## 10. Backup
-
-```bash
-chmod +x ~/tandurai-app/deploy/backup.sh
-crontab -e
-```
-
-Tambahkan:
-
-```
-0 2 * * * /home/<user>/tandurai-app/deploy/backup.sh >> /home/<user>/tandurai-backup.log 2>&1
-```
-
-Backup tersimpan di `~/backups` (14 hari). Agar juga ada salinan di luar VM, buat bucket Cloud Storage dan tambahkan `BACKUP_BUCKET=gs://<nama-bucket>` di awal baris cron (VM butuh akses *Storage read/write* pada service account-nya).
-
-Tambahan yang disarankan: **Compute Engine → Snapshots → Create snapshot schedule** (harian, simpan 7) untuk disk VM.
-
-Pulihkan database:
-
-```bash
-cd ~/tandurai-app/deploy
-docker compose exec -T postgres pg_restore -U tandurai -d tandurai_iot --clean --if-exists < ~/backups/<file>.dump
-```
-
----
-
-## 11. Sertifikat HTTPS & MQTT TLS
-
-- Caddy mengambil dan memperpanjang sertifikat Let's Encrypt otomatis untuk kedua domain (RSA, berantai ke **ISRG Root X1**, sama dengan CA di firmware ESP32).
-- Broker membaca sertifikat `MQTT_DOMAIN` dari volume `caddy-data`. Saat Caddy memperpanjangnya, broker otomatis restart (dicek tiap 10 menit). Gateway tersambung ulang sendiri.
-- Tidak perlu certbot atau cron sertifikat.
-
----
-
-## 12. Checklist go-live
-
-- [ ] `docker compose ps`: semua `Up`, `api` dan `postgres` `healthy`
-- [ ] `curl https://dashboard.tandurai.id/api/health` → `"ok":true`
-- [ ] Login Google & email berhasil (domain sudah di Authorized domains)
-- [ ] `docker compose exec worker python -m worker health` → `"errors": []`
-- [ ] **Perkiraan Panen → Hitung ulang** berhasil
-- [ ] Gateway uji tersambung lewat `mqtt.tandurai.id:8883` dan `device-check` tanpa ✖
-- [ ] Dari luar VM, port 5432/8787/1883 **tidak** bisa diakses (`nc -vz <IP> 5432` gagal)
-- [ ] Cron backup berjalan; snapshot disk terjadwal
-- [ ] `deploy/.env` ber-permission `600`
-
----
-
-## 13. Pemecahan masalah
-
-| Gejala | Penyebab umum | Solusi |
-|---|---|---|
-| Browser: sertifikat tidak valid | DNS belum mengarah / port 80 tertutup saat Caddy start | cek DNS & firewall, lalu `docker compose restart web`; lihat `docker compose logs web` |
-| Broker terus `menunggu sertifikat` | sertifikat `MQTT_DOMAIN` gagal diambil | cek record A `mqtt.…` dan `docker compose logs web` |
-| `/api/health` → `mqtt:false` | broker belum siap / crash | `docker compose logs broker` |
-| Build berhenti `Killed` / exit 137 | RAM habis saat `vite build` | pastikan swap aktif (`swapon --show`) atau naikkan tipe mesin |
-| Login `unauthorized-domain` | domain belum diizinkan Firebase | tambah di Authorized domains |
-| `CORS` error | `DASHBOARD_DOMAIN` tidak sama dengan URL yang dibuka | samakan, lalu `bash deploy/deploy.sh --no-pull` |
-| Perkiraan panen gagal | worker mati / artefak model tidak cocok | `docker compose logs worker`; `docker compose exec worker python -m worker health` |
-| Disk penuh | image lama / backup menumpuk | `docker system df`, `docker image prune -a`, cek `~/backups` |
-| Ubah `VITE_*` tidak berefek | nilai `VITE_*` masuk saat build | jalankan ulang `bash deploy/deploy.sh` (build ulang image `web`) |
-| `port is already allocated` (80/443) | VM sudah punya reverse proxy lain | pakai mode NPM di §14 |
-| `network shared_network ... not found` | nama network NPM berbeda | cek `docker inspect nginx-proxy-manager --format '{{json .NetworkSettings.Networks}}'`, isi `NPM_NETWORK` |
-| NPM `502 Bad Gateway` | container `web` belum jalan / tidak di network NPM | `docker compose ps web`; `docker network inspect shared_network` harus memuat `tandurai-web` |
-| Realtime dashboard tidak update di belakang NPM | NPM menahan respons SSE | pastikan Advanced config proxy host dashboard berisi `proxy_buffering off;` (§14) |
-
----
-
-## 14. VM bersama dengan Nginx Proxy Manager
-
-Dipakai bila VM sudah menjalankan project lain dan port 80/443 dipegang container **Nginx Proxy Manager** (NPM). Tandurai tidak membuka port 80/443 sendiri; NPM meneruskan kedua domain ke container `web` lewat network Docker milik NPM.
-
-```
-Browser ──HTTPS 443──▶ NPM (TLS dashboard) ──http──▶ web/Caddy (alias tandurai-web) ──▶ api
-Let's Encrypt ──HTTP 80──▶ NPM ──http──▶ web/Caddy  → sertifikat RSA untuk MQTT_DOMAIN → broker
-ESP32 ──MQTTS 8883──────────────────────────────▶ broker (port langsung dari container Tandurai)
-```
-
-Sertifikat `MQTT_DOMAIN` sengaja **tetap diambil Caddy**, bukan NPM: Caddy dipaksa memakai kunci RSA yang berantai ke ISRG Root X1 seperti di firmware ESP32, dan broker sudah membaca sertifikatnya dari volume `caddy-data`.
-
-### 14.1 Cek port & nama network
-
-```bash
-sudo ss -tulpn | grep -E ':(80|443|8883)\b'          # 8883 harus kosong
-sudo docker inspect nginx-proxy-manager --format '{{json .NetworkSettings.Networks}}'
-sudo docker compose ls                                 # nama project "tandurai" belum dipakai
-```
-
-Port yang dibuka Tandurai di host hanya **8883/tcp**. Postgres, API, dan MQTT 1883 Tandurai tetap internal, jadi tidak bentrok dengan port 1883/5432 yang mungkin dibuka NPM untuk project lain.
-
-User tanpa grup `docker` perlu `sudo` (termasuk `sudo bash deploy/deploy.sh`), atau minta admin VM menjalankan `sudo usermod -aG docker $USER` lalu login ulang.
-
-### 14.2 DNS & firewall
-
-- Record **A** `DASHBOARD_DOMAIN` dan `MQTT_DOMAIN` → IP statis VM yang sudah ada.
-- Buka port 8883 di firewall GCP untuk VM itu:
-
-```bash
-gcloud compute firewall-rules create tandurai-mqtt --allow=tcp:8883 --target-tags=tandurai-mqtt
-gcloud compute instances add-tags <nama-vm> --zone=<zona> --tags=tandurai-mqtt
-```
-
-### 14.3 `deploy/.env`
-
-Isi seperti §6, lalu aktifkan dua baris ini:
-
-```bash
-COMPOSE_FILE=docker-compose.yml:docker-compose.npm.yml
-NPM_NETWORK=shared_network
-```
-
-Karena `COMPOSE_FILE` ada di `.env`, semua perintah `docker compose` dari folder `deploy/` (termasuk `deploy.sh` dan `backup.sh`) otomatis memakai mode NPM. Jangan tambahkan `-f docker-compose.yml` saat menjalankan perintah, karena opsi itu menimpa `COMPOSE_FILE`.
-
-Lalu deploy: `bash deploy/deploy.sh`. Container `web` hanya punya alias `tandurai-web` di network NPM, sehingga tidak bentrok dengan service bernama `web`/`api` milik project lain.
-
-### 14.4 Proxy Host di NPM
-
-Buka panel admin NPM (container ini memetakan port 81 ke host **82**), lalu **Hosts → Proxy Hosts → Add Proxy Host**:
-
-**a. Dashboard**
+### a. Dashboard
 
 | Tab | Isian |
 |---|---|
 | Details | Domain `dashboard.tandurai.id` · Scheme `http` · Forward Hostname `tandurai-web` · Port `80` · centang *Block Common Exploits* |
 | SSL | *Request a new SSL Certificate* · centang *Force SSL* dan *HTTP/2 Support* |
-| Advanced | lihat di bawah |
+| Advanced | isi di bawah |
 
 ```nginx
 # SSE realtime dashboard: jangan ditahan buffer NPM
@@ -378,24 +199,137 @@ proxy_read_timeout 1h;
 client_max_body_size 4m;
 ```
 
-**b. Domain MQTT (hanya untuk sertifikat)**
+### b. Domain MQTT (hanya untuk sertifikat)
 
 | Tab | Isian |
 |---|---|
 | Details | Domain `mqtt.tandurai.id` · Scheme `http` · Forward Hostname `tandurai-web` · Port `80` |
 | SSL | **None.** Jangan minta sertifikat di NPM dan jangan *Force SSL*, supaya challenge HTTP-01 Let's Encrypt diteruskan ke Caddy |
 
-Setelah kedua proxy host aktif, percepat pengambilan sertifikat MQTT:
+### c. Ambil sertifikat MQTT
 
 ```bash
-cd ~/tandurai-app/deploy
-docker compose restart web
-docker compose logs -f web      # tunggu "certificate obtained successfully" untuk mqtt.tandurai.id
-docker compose logs -f broker   # "menunggu sertifikat" berhenti, broker jalan
+cd /home/service/tandurai/deploy
+sudo docker compose restart web
+sudo docker compose logs -f web      # tunggu "certificate obtained successfully" untuk mqtt.tandurai.id
+sudo docker compose logs -f broker   # "menunggu sertifikat" berhenti, broker jalan
 ```
 
-### 14.5 Cek
+Lalu cek:
 
-- `curl -s https://dashboard.tandurai.id/api/health` → `"ok":true,"db":true,"mqtt":true`
-- `openssl s_client -connect mqtt.tandurai.id:8883 -servername mqtt.tandurai.id </dev/null 2>/dev/null | grep -E 'i:|Server public key'` → issuer intermediate RSA Let's Encrypt (`R10`, `R11`, dst., bukan `E…`), kunci `2048 bit`
-- Project lain di VM tetap normal: `sudo docker compose ls`
+```bash
+curl -s https://dashboard.tandurai.id/api/health      # "ok":true,"db":true,"mqtt":true
+openssl s_client -connect mqtt.tandurai.id:8883 -servername mqtt.tandurai.id </dev/null 2>/dev/null \
+  | grep -E 'i:|Server public key'                    # intermediate RSA (R10, R11, …), kunci 2048 bit
+```
+
+Buka `https://dashboard.tandurai.id`, login dengan email di `ADMIN_EMAILS`, lalu lanjutkan isi data awal seperti di §11 `PANDUAN_DEPLOY.md`.
+
+---
+
+## 7. Update aplikasi
+
+Di laptop: commit & push ke `develop`. Di VM:
+
+```bash
+cd /home/service/tandurai && sudo bash deploy/deploy.sh
+```
+
+Migration database berjalan otomatis saat `api` start. Model AI baru cukup di-sync ke `ai_model/` (lihat `ai_model/README.md`), commit, lalu jalankan perintah yang sama.
+
+---
+
+## 8. Perintah server
+
+Jalankan dari `/home/service/tandurai/deploy` (di sana `.env` memilih mode NPM; **jangan** tambahkan `-f docker-compose.yml`, karena opsi itu menimpa `COMPOSE_FILE`):
+
+| Kebutuhan | Perintah |
+|---|---|
+| Status | `sudo docker compose ps` |
+| Pemakaian RAM/CPU (semua project) | `sudo docker stats --no-stream` |
+| Log semua / satu layanan | `sudo docker compose logs -f` · `sudo docker compose logs -f broker` |
+| Restart satu layanan | `sudo docker compose restart worker` |
+| Health API | `curl -s https://dashboard.tandurai.id/api/health` |
+| Health AI worker | `sudo docker compose exec worker python -m worker health` |
+| Registrasi perangkat massal | `sudo docker compose run --rm -v /root/provisioning:/out api node apps/api/tools/factory-provision.mjs --count 20 --out-dir /out` |
+| Cek gateway | `sudo docker compose exec api node apps/api/tools/device-check.mjs --hw-uid TDR-XXXXXXXXXXXX --seconds 120` |
+| Masuk database | `sudo docker compose exec postgres psql -U tandurai tandurai_iot` |
+| Matikan Tandurai saja | `sudo docker compose down` (data aman di volume; project lain tidak terpengaruh) |
+
+> Jangan pernah `docker compose down -v` — opsi `-v` menghapus volume database dan sertifikat. Jangan juga `docker system prune -a --volumes` di VM ini: perintah itu ikut menyentuh image/volume project lain.
+
+File hasil `factory-provision` di `/root/provisioning` berisi `deviceSecret`: simpan aman, lalu hapus dari VM.
+
+---
+
+## 9. Backup
+
+Cron dipasang di crontab root (karena docker butuh sudo):
+
+```bash
+sudo crontab -e
+```
+
+Tambahkan:
+
+```
+0 2 * * * BACKUP_DIR=/home/service/tandurai-backups /home/service/tandurai/deploy/backup.sh >> /var/log/tandurai-backup.log 2>&1
+```
+
+Backup disimpan 14 hari. Agar juga ada salinan di luar VM, buat bucket Cloud Storage dan tambahkan `BACKUP_BUCKET=gs://<nama-bucket>` di awal baris cron (service account VM butuh akses *Storage read/write*). Snapshot disk VM sebaiknya dikoordinasikan dengan admin `aitoma-prod`, karena berlaku untuk semua project.
+
+Pulihkan database:
+
+```bash
+cd /home/service/tandurai/deploy
+sudo docker compose exec -T postgres pg_restore -U tandurai -d tandurai_iot --clean --if-exists < /home/service/tandurai-backups/<file>.dump
+```
+
+---
+
+## 10. Sertifikat HTTPS & MQTT TLS
+
+- **Dashboard:** sertifikat diambil dan diperpanjang NPM (proxy host §6a).
+- **MQTT:** Caddy mengambil dan memperpanjang sertifikat Let's Encrypt RSA untuk `MQTT_DOMAIN` lewat HTTP-01 yang diteruskan NPM (§6b). Broker membacanya dari volume `caddy-data` dan otomatis restart saat sertifikat diperbarui (dicek tiap 10 menit). Gateway tersambung ulang sendiri.
+- Proxy host `mqtt.tandurai.id` di NPM **jangan dihapus** dan jangan diberi SSL: tanpa itu sertifikat MQTT gagal diperpanjang ±90 hari kemudian.
+
+---
+
+## 11. Checklist go-live
+
+- [ ] `sudo docker compose ps`: semua `Up`, `api` dan `postgres` `healthy`
+- [ ] `curl https://dashboard.tandurai.id/api/health` → `"ok":true` dan `"mqtt":true`
+- [ ] Realtime dashboard ter-update tanpa refresh (cek *Advanced* proxy host dashboard)
+- [ ] Login Google & email berhasil (domain sudah di Authorized domains)
+- [ ] `sudo docker compose exec worker python -m worker health` → `"errors": []`
+- [ ] **Perkiraan Panen → Hitung ulang** berhasil
+- [ ] Gateway uji tersambung lewat `mqtt.tandurai.id:8883` dan `device-check` tanpa ✖
+- [ ] Project lain tetap normal: `sudo docker compose ls` semuanya `running`
+- [ ] Cron backup berjalan
+- [ ] `deploy/.env` ber-permission `600`
+
+---
+
+## 12. Pemecahan masalah
+
+| Gejala | Penyebab umum | Solusi |
+|---|---|---|
+| `port is already allocated` (80/443) | `COMPOSE_FILE` di `deploy/.env` hilang/terkomentar, atau perintah memakai `-f docker-compose.yml` | aktifkan lagi `COMPOSE_FILE`, jalankan dari folder `deploy/` tanpa `-f` |
+| `network shared_network ... not found` | nama network NPM berubah | cek `sudo docker inspect nginx-proxy-manager --format '{{json .NetworkSettings.Networks}}'`, sesuaikan `NPM_NETWORK` |
+| NPM `502 Bad Gateway` | container `web` belum jalan / tidak di network NPM | `sudo docker compose ps web`; `sudo docker network inspect shared_network` harus memuat `tandurai-web` |
+| Broker terus `menunggu sertifikat` | proxy host MQTT belum ada / diberi SSL / DNS belum benar | cek §6b dan record A `mqtt.…`; `sudo docker compose logs web` |
+| `/api/health` → `mqtt:false` | broker belum siap / crash | `sudo docker compose logs broker` |
+| Realtime dashboard tidak update | NPM menahan respons SSE | Advanced config proxy host dashboard harus berisi `proxy_buffering off;` |
+| ESP32 gagal TLS ke 8883 | port 8883 belum dibuka di firewall GCP / sertifikat bukan RSA | cek §3; cek `openssl s_client` di §6c |
+| `fatal: detected dubious ownership` | `git`/`deploy.sh` dijalankan tanpa sudo pada repo milik root (atau sebaliknya) | konsisten pakai `sudo` |
+| Build berhenti `Killed` / exit 137 | RAM VM habis saat `vite build` | cek `free -h`; minta tambah swap atau build di luar jam sibuk |
+| Login `unauthorized-domain` | domain belum diizinkan Firebase | tambah di Authorized domains |
+| `CORS` error | `DASHBOARD_DOMAIN` tidak sama dengan URL yang dibuka | samakan, lalu `sudo bash deploy/deploy.sh --no-pull` |
+| Perkiraan panen gagal | worker mati / artefak model tidak cocok | `sudo docker compose logs worker`; `sudo docker compose exec worker python -m worker health` |
+| Ubah `VITE_*` tidak berefek | nilai `VITE_*` masuk saat build | jalankan ulang `sudo bash deploy/deploy.sh` (build ulang image `web`) |
+
+---
+
+## Lampiran: VM baru khusus Tandurai
+
+Bila suatu saat Tandurai dipindah ke VM sendiri tanpa NPM: hapus baris `COMPOSE_FILE` dan `NPM_NETWORK` dari `deploy/.env` (Caddy lalu memegang port 80/443 dan HTTPS dashboard sendiri), jalankan `sudo bash deploy/setup-vm.sh` sekali untuk memasang Docker + swap, dan buka firewall `tcp:80,tcp:443,udp:443,tcp:8883`.
