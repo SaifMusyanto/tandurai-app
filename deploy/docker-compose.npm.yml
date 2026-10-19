@@ -1,0 +1,21 @@
+# Mode VM bersama: port 80/443 sudah dipegang Nginx Proxy Manager (NPM), jadi Caddy Tandurai tidak membuka port host.
+# NPM meneruskan DASHBOARD_DOMAIN dan MQTT_DOMAIN ke container ini lewat network NPM (alias "tandurai-web").
+# Aktifkan dengan baris berikut di deploy/.env:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.npm.yml
+# Butuh Docker Compose >= 2.24 (untuk !reset).
+services:
+  web:
+    ports: !reset []
+    environment:
+      # TLS dashboard diurus NPM; Caddy cukup melayani HTTP.
+      DASHBOARD_SITE: http://${DASHBOARD_DOMAIN}
+    networks:
+      default:
+      npm:
+        aliases:
+          - tandurai-web
+
+networks:
+  npm:
+    external: true
+    name: ${NPM_NETWORK:-shared_network}

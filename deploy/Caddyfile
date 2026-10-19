@@ -6,12 +6,13 @@
 	key_type rsa2048
 }
 
-{$DASHBOARD_DOMAIN} {
+# DASHBOARD_SITE = domain dashboard (HTTPS oleh Caddy), atau http://domain saat TLS diurus Nginx Proxy Manager.
+{$DASHBOARD_SITE} {
 	encode zstd gzip
 
 	# Realtime (SSE). Access log Caddy mati secara bawaan, jadi token di query string tidak tercatat.
 	handle /api/stream* {
-		reverse_proxy api:8787 {
+		reverse_proxy tandurai-api:8787 {
 			flush_interval -1
 		}
 	}
@@ -20,7 +21,7 @@
 		request_body {
 			max_size 4MB
 		}
-		reverse_proxy api:8787
+		reverse_proxy tandurai-api:8787
 	}
 
 	# SPA: semua route dashboard → index.html
@@ -34,6 +35,14 @@
 }
 
 # Domain MQTT hanya perlu sertifikat; broker (port 8883) membacanya dari volume caddy-data.
+# Challenge lewat HTTP-01 (port 80) saja, supaya tetap jalan di belakang NPM yang hanya meneruskan port 80 domain ini.
 {$MQTT_DOMAIN} {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+			email {$ACME_EMAIL}
+			disable_tlsalpn_challenge
+		}
+	}
 	respond "Broker MQTT Tandurai: mqtts://{host}:8883" 404
 }

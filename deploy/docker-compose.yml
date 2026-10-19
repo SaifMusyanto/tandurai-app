@@ -80,6 +80,11 @@ services:
     user: node
     restart: unless-stopped
     environment: *api-env
+    networks:
+      default:
+        # Nama unik untuk Caddy: container web juga bisa ikut network bersama yang mungkin punya service "api" lain.
+        aliases:
+          - tandurai-api
     depends_on:
       postgres:
         condition: service_healthy
@@ -132,6 +137,8 @@ services:
     restart: unless-stopped
     environment:
       DASHBOARD_DOMAIN: ${DASHBOARD_DOMAIN:?isi DASHBOARD_DOMAIN di deploy/.env}
+      # Alamat situs dashboard di Caddyfile; docker-compose.npm.yml menggantinya ke http:// di belakang NPM.
+      DASHBOARD_SITE: ${DASHBOARD_DOMAIN}
       MQTT_DOMAIN: ${MQTT_DOMAIN:?isi MQTT_DOMAIN di deploy/.env}
       ACME_EMAIL: ${ACME_EMAIL:?isi ACME_EMAIL di deploy/.env}
     ports:

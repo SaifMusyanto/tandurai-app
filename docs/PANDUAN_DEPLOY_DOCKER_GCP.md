@@ -34,6 +34,8 @@ ESP32 ──MQTTS 8883───▶ │                    broker (aedes) ◀─�
 
 Hanya port **22, 80, 443, 8883** yang terbuka. PostgreSQL, API, dan MQTT 1883 hanya ada di jaringan internal Docker.
 
+> **Deploy ke VM yang sudah dipakai project lain** (port 80/443 sudah dipegang Nginx Proxy Manager)? Ikuti [§14](#14-vm-bersama-dengan-nginx-proxy-manager); langkah 3 (buat VM) dan `setup-vm.sh` dilewati.
+
 ---
 
 ## 1. Kebutuhan resource
@@ -302,3 +304,98 @@ docker compose exec -T postgres pg_restore -U tandurai -d tandurai_iot --clean -
 | Perkiraan panen gagal | worker mati / artefak model tidak cocok | `docker compose logs worker`; `docker compose exec worker python -m worker health` |
 | Disk penuh | image lama / backup menumpuk | `docker system df`, `docker image prune -a`, cek `~/backups` |
 | Ubah `VITE_*` tidak berefek | nilai `VITE_*` masuk saat build | jalankan ulang `bash deploy/deploy.sh` (build ulang image `web`) |
+| `port is already allocated` (80/443) | VM sudah punya reverse proxy lain | pakai mode NPM di §14 |
+| `network shared_network ... not found` | nama network NPM berbeda | cek `docker inspect nginx-proxy-manager --format '{{json .NetworkSettings.Networks}}'`, isi `NPM_NETWORK` |
+| NPM `502 Bad Gateway` | container `web` belum jalan / tidak di network NPM | `docker compose ps web`; `docker network inspect shared_network` harus memuat `tandurai-web` |
+| Realtime dashboard tidak update di belakang NPM | NPM menahan respons SSE | pastikan Advanced config proxy host dashboard berisi `proxy_buffering off;` (§14) |
+
+---
+
+## 14. VM bersama dengan Nginx Proxy Manager
+
+Dipakai bila VM sudah menjalankan project lain dan port 80/443 dipegang container **Nginx Proxy Manager** (NPM). Tandurai tidak membuka port 80/443 sendiri; NPM meneruskan kedua domain ke container `web` lewat network Docker milik NPM.
+
+```
+Browser ──HTTPS 443──▶ NPM (TLS dashboard) ──http──▶ web/Caddy (alias tandurai-web) ──▶ api
+Let's Encrypt ──HTTP 80──▶ NPM ──http──▶ web/Caddy  → sertifikat RSA untuk MQTT_DOMAIN → broker
+ESP32 ──MQTTS 8883──────────────────────────────▶ broker (port langsung dari container Tandurai)
+```
+
+Sertifikat `MQTT_DOMAIN` sengaja **tetap diambil Caddy**, bukan NPM: Caddy dipaksa memakai kunci RSA yang berantai ke ISRG Root X1 seperti di firmware ESP32, dan broker sudah membaca sertifikatnya dari volume `caddy-data`.
+
+### 14.1 Cek port & nama network
+
+```bash
+sudo ss -tulpn | grep -E ':(80|443|8883)\b'          # 8883 harus kosong
+sudo docker inspect nginx-proxy-manager --format '{{json .NetworkSettings.Networks}}'
+sudo docker compose ls                                 # nama project "tandurai" belum dipakai
+```
+
+Port yang dibuka Tandurai di host hanya **8883/tcp**. Postgres, API, dan MQTT 1883 Tandurai tetap internal, jadi tidak bentrok dengan port 1883/5432 yang mungkin dibuka NPM untuk project lain.
+
+User tanpa grup `docker` perlu `sudo` (termasuk `sudo bash deploy/deploy.sh`), atau minta admin VM menjalankan `sudo usermod -aG docker $USER` lalu login ulang.
+
+### 14.2 DNS & firewall
+
+- Record **A** `DASHBOARD_DOMAIN` dan `MQTT_DOMAIN` → IP statis VM yang sudah ada.
+- Buka port 8883 di firewall GCP untuk VM itu:
+
+```bash
+gcloud compute firewall-rules create tandurai-mqtt --allow=tcp:8883 --target-tags=tandurai-mqtt
+gcloud compute instances add-tags <nama-vm> --zone=<zona> --tags=tandurai-mqtt
+```
+
+### 14.3 `deploy/.env`
+
+Isi seperti §6, lalu aktifkan dua baris ini:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:docker-compose.npm.yml
+NPM_NETWORK=shared_network
+```
+
+Karena `COMPOSE_FILE` ada di `.env`, semua perintah `docker compose` dari folder `deploy/` (termasuk `deploy.sh` dan `backup.sh`) otomatis memakai mode NPM. Jangan tambahkan `-f docker-compose.yml` saat menjalankan perintah, karena opsi itu menimpa `COMPOSE_FILE`.
+
+Lalu deploy: `bash deploy/deploy.sh`. Container `web` hanya punya alias `tandurai-web` di network NPM, sehingga tidak bentrok dengan service bernama `web`/`api` milik project lain.
+
+### 14.4 Proxy Host di NPM
+
+Buka panel admin NPM (container ini memetakan port 81 ke host **82**), lalu **Hosts → Proxy Hosts → Add Proxy Host**:
+
+**a. Dashboard**
+
+| Tab | Isian |
+|---|---|
+| Details | Domain `dashboard.tandurai.id` · Scheme `http` · Forward Hostname `tandurai-web` · Port `80` · centang *Block Common Exploits* |
+| SSL | *Request a new SSL Certificate* · centang *Force SSL* dan *HTTP/2 Support* |
+| Advanced | lihat di bawah |
+
+```nginx
+# SSE realtime dashboard: jangan ditahan buffer NPM
+proxy_buffering off;
+proxy_cache off;
+proxy_read_timeout 1h;
+client_max_body_size 4m;
+```
+
+**b. Domain MQTT (hanya untuk sertifikat)**
+
+| Tab | Isian |
+|---|---|
+| Details | Domain `mqtt.tandurai.id` · Scheme `http` · Forward Hostname `tandurai-web` · Port `80` |
+| SSL | **None.** Jangan minta sertifikat di NPM dan jangan *Force SSL*, supaya challenge HTTP-01 Let's Encrypt diteruskan ke Caddy |
+
+Setelah kedua proxy host aktif, percepat pengambilan sertifikat MQTT:
+
+```bash
+cd ~/tandurai-app/deploy
+docker compose restart web
+docker compose logs -f web      # tunggu "certificate obtained successfully" untuk mqtt.tandurai.id
+docker compose logs -f broker   # "menunggu sertifikat" berhenti, broker jalan
+```
+
+### 14.5 Cek
+
+- `curl -s https://dashboard.tandurai.id/api/health` → `"ok":true,"db":true,"mqtt":true`
+- `openssl s_client -connect mqtt.tandurai.id:8883 -servername mqtt.tandurai.id </dev/null 2>/dev/null | grep -E 'i:|Server public key'` → issuer intermediate RSA Let's Encrypt (`R10`, `R11`, dst., bukan `E…`), kunci `2048 bit`
+- Project lain di VM tetap normal: `sudo docker compose ls`
