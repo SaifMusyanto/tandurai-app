@@ -1,0 +1,39 @@
+# Caddy: HTTPS otomatis (Let's Encrypt), dashboard statis, dan reverse proxy /api.
+# Sertifikat RSA dari Let's Encrypt supaya rantainya ke ISRG Root X1 (CA yang ditanam di firmware ESP32).
+{
+	email {$ACME_EMAIL}
+	acme_ca https://acme-v02.api.letsencrypt.org/directory
+	key_type rsa2048
+}
+
+{$DASHBOARD_DOMAIN} {
+	encode zstd gzip
+
+	# Realtime (SSE). Access log Caddy mati secara bawaan, jadi token di query string tidak tercatat.
+	handle /api/stream* {
+		reverse_proxy api:8787 {
+			flush_interval -1
+		}
+	}
+
+	handle /api/* {
+		request_body {
+			max_size 4MB
+		}
+		reverse_proxy api:8787
+	}
+
+	# SPA: semua route dashboard → index.html
+	handle {
+		root * /srv
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=2592000, immutable"
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# Domain MQTT hanya perlu sertifikat; broker (port 8883) membacanya dari volume caddy-data.
+{$MQTT_DOMAIN} {
+	respond "Broker MQTT Tandurai: mqtts://{host}:8883" 404
+}

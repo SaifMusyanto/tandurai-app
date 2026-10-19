@@ -32,7 +32,7 @@ def _sha256(path: Path) -> str:
 
 def resolve_model_root() -> Path:
     configured = os.getenv("MODEL_MODULE_PATH", "").strip()
-    candidate = Path(configured).expanduser() if configured else WORKER_ROOT / "../../Modul AI Aitoma"
+    candidate = Path(configured).expanduser() if configured else WORKER_ROOT / "../ai_model"
     return candidate.resolve() if candidate.is_absolute() else (WORKER_ROOT / candidate).resolve()
 
 

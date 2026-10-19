@@ -1,0 +1,147 @@
+{
+  "schemaVersion": "batch-harvest-model-v3",
+  "featureColumns": [
+    "baglog_count_initial",
+    "baglog_count_active",
+    "substrate_type",
+    "contamination_pct",
+    "avg_temperature_c",
+    "temperature_std_c",
+    "temperature_optimal_pct",
+    "avg_humidity_pct",
+    "humidity_std_pct",
+    "humidity_optimal_pct",
+    "avg_co2_ppm",
+    "co2_std_ppm",
+    "co2_optimal_pct",
+    "sensor_completeness_pct",
+    "start_month_sin",
+    "start_month_cos"
+  ],
+  "categoricalColumns": [
+    "substrate_type"
+  ],
+  "targets": {
+    "yieldRate": "yield_kg_per_active_baglog",
+    "totalHarvest": "yieldRate * baglog_count_active",
+    "harvestStartDay": "harvest_start_day",
+    "harvestEndDay": "harvest_end_day"
+  },
+  "data": {
+    "path": "data\\batch_training.csv",
+    "sha256": "bca025787ff8e9bc00817d8103619a4e88953933c9a0d13724751145bfd038d9",
+    "origin": "synthetic_batch_simulation_v3_condition_history",
+    "fieldValidated": false,
+    "trainRows": 8335,
+    "validationRows": 2008,
+    "testRows": 1657
+  },
+  "calibrationPrior": {
+    "source": "product_requirement",
+    "expectedKgPerActiveBaglog": {
+      "worstCondition": 0.3,
+      "bestCondition": 0.5
+    },
+    "expectedKgPer1000ActiveBaglogs": {
+      "worstCondition": 300,
+      "bestCondition": 500
+    },
+    "conditionScore": "0.40*temperature_optimal_pct + 0.35*humidity_optimal_pct + 0.25*co2_optimal_pct",
+    "optimalRanges": {
+      "temperatureC": [
+        22,
+        28
+      ],
+      "humidityPct": [
+        80,
+        90
+      ],
+      "co2Ppm": [
+        0,
+        1000
+      ]
+    },
+    "appliesTo": "whole_batch_condition_history"
+  },
+  "scenarioChecks": {
+    "selalu_buruk": 301.4,
+    "sedang": 397.4,
+    "selalu_optimal": 499.5
+  },
+  "validationMetrics": {
+    "batch_yield_point.joblib": {
+      "target": "yield_kg_per_active_baglog",
+      "mae": 0.006937244535398841,
+      "r2": 0.9865566720361377
+    },
+    "batch_yield_p10.joblib": {
+      "target": "yield_kg_per_active_baglog",
+      "mae": 0.01036542295819921,
+      "r2": 0.9724176746808632
+    },
+    "batch_yield_p90.joblib": {
+      "target": "yield_kg_per_active_baglog",
+      "mae": 0.010526027926258948,
+      "r2": 0.9709696057071737
+    },
+    "batch_start_day.joblib": {
+      "target": "harvest_start_day",
+      "mae": 1.2799221745953715,
+      "r2": 0.8726864725746399
+    },
+    "batch_end_day.joblib": {
+      "target": "harvest_end_day",
+      "mae": 2.2440683781388313,
+      "r2": 0.29418095884902407
+    }
+  },
+  "testMetrics": {
+    "totalHarvestKg": {
+      "mae": 53.70403602453167,
+      "wapePct": 1.6122954336249817,
+      "r2": 0.9985342807225431,
+      "p10P90CoveragePct": 73.38563669281835
+    },
+    "harvestStartDay": {
+      "maeDays": 1.2643681172038752,
+      "r2": 0.8722183507475704
+    },
+    "harvestEndDay": {
+      "maeDays": 2.2345882658685343,
+      "r2": 0.3144648176124255
+    }
+  },
+  "artifacts": {
+    "batch_yield_point.joblib": {
+      "sha256": "d3900660b12c6bd422669c3dc78c66cff51b9dbac323d6c3b6993a9a309a9fb8",
+      "target": "yield_kg_per_active_baglog",
+      "loss": "squared_error",
+      "quantile": null
+    },
+    "batch_yield_p10.joblib": {
+      "sha256": "bd01cf3bff7b9e096db688ca5db8cebf0681ff7e144f59d150d762a5a62d9609",
+      "target": "yield_kg_per_active_baglog",
+      "loss": "quantile",
+      "quantile": 0.1
+    },
+    "batch_yield_p90.joblib": {
+      "sha256": "01dc3a082f6bb652ff98b1ff5d5e6b18baad0b7ae2d6ee819209bee1eed944f2",
+      "target": "yield_kg_per_active_baglog",
+      "loss": "quantile",
+      "quantile": 0.9
+    },
+    "batch_start_day.joblib": {
+      "sha256": "94ba89cfd5d8a9ea718fc4abd0fcdc4b88a6433a1ef864a169e42997b1c75b78",
+      "target": "harvest_start_day",
+      "loss": "absolute_error",
+      "quantile": null
+    },
+    "batch_end_day.joblib": {
+      "sha256": "d60817fe0bc767b3109050b5f8115a7652aaf41f4b90cca5b51b31d8034671ef",
+      "target": "harvest_end_day",
+      "loss": "absolute_error",
+      "quantile": null
+    }
+  },
+  "claimStatus": "synthetic benchmark only; field claim prohibited"
+}

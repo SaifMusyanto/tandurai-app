@@ -1,0 +1,30 @@
+# Konteks build Docker (deploy/docker-compose.yml). Jangan pernah kirim rahasia/kredensial ke image.
+**/node_modules
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/*.log
+.git
+dist
+.firebase
+.gateway-sim
+.vscode
+
+# Rahasia & kredensial
+**/.env
+**/.env.*
+!**/.env.example
+**/credentials
+**/*service-account*.json
+firebase-admin*.json
+provisioning
+apps/api/.sim
+apps/api/deploy/mosquitto/passwd
+
+# Runtime & data lokal
+local_ai_worker/runtime
+local_ai_worker/logs
+local_ai_worker/state
+migration-backups
+rtdb-export*.json
+deploy/.env

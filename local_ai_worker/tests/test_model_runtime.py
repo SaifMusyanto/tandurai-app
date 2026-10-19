@@ -60,7 +60,7 @@ def _batch(history):
 
 
 def test_batch_model_v3_follows_condition_history_300_to_500_kg_per_1000_baglogs():
-    model_root = Path(__file__).resolve().parents[3] / "Modul AI Aitoma"
+    model_root = Path(__file__).resolve().parents[2] / "ai_model"
     runtime = HarvestModelRuntime(model_root)
     worst = runtime.predict_batch_total(_batch(_history(31.5, 3.0, 68.0, 2.0, 2200.0, 0.0)))
     middle = runtime.predict_batch_total(_batch(_history(27.5, 60.0, 80.0, 50.0, 1050.0, 40.0)))

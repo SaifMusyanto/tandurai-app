@@ -1,0 +1,8 @@
+model,status,validation_wape_pct,runtime_seconds,note
+HistGradientBoosting reference,executed,11.781408051115283,1.452975029999834,Synthetic benchmark; not field accuracy
+GradientBoosting reference,executed,16.588531764452803,10.97741761899988,Synthetic benchmark; not field accuracy
+LightGBM,not_executed,,0.00012256399986654287,Install lightgbm to run the exact LightGBM model
+XGBoost,not_executed,,4.162200002610916e-05,Install xgboost to run the exact XGBoost model
+Quantile Regression,executed,,,P10/P50/P90 synthetic benchmark
+GRU,packaged_not_executed,,,Run scripts/train_deep.py in environment with torch
+TFT,packaged_not_executed,,,Run scripts/train_deep.py in environment with pytorch-forecasting

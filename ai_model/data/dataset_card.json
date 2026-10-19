@@ -1,0 +1,19 @@
+{
+  "name": "TANDURAI Harvest Forecast Synthetic Dataset v1",
+  "created_for": "Pipeline integration and synthetic benchmark only",
+  "data_origin": "synthetic_simulation_v1",
+  "field_validated": false,
+  "seed": 20260714,
+  "farms": 8,
+  "kumbungs": 24,
+  "days_simulated": 240,
+  "sensor_rows": 138240,
+  "harvest_rows": 5760,
+  "model_rows": 5568,
+  "forecast_horizon_days": 7,
+  "limitations": [
+    "Synthetic relationships are simpler than real cultivation.",
+    "No sensor drift, device outage, human entry error, or extreme disease outbreak is fully represented.",
+    "Metrics from this dataset must not be presented as field accuracy."
+  ]
+}

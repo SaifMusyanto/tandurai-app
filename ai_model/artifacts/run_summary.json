@@ -1,0 +1,15 @@
+{
+  "data_origin": "synthetic_simulation_v1",
+  "field_validated": false,
+  "target": "harvest_next_7d_kg",
+  "train_rows": 3888,
+  "validation_rows": 840,
+  "test_rows": 840,
+  "train_end": "2025-06-12",
+  "validation_end": "2025-07-17",
+  "selected_model_by_validation": "HistGradientBoosting reference",
+  "selected_validation_wape_pct": 11.781408051115283,
+  "selected_test_wape_pct": 9.142820600489566,
+  "selected_test_forecast_accuracy_pct": 90.85717939951043,
+  "claim_status": "synthetic benchmark only; field claim prohibited"
+}

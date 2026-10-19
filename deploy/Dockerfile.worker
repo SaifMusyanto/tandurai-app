@@ -1,0 +1,25 @@
+# AI worker (local_ai_worker) + model runtime (ai_model) dalam satu image.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app/local_ai_worker
+COPY local_ai_worker/requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY ai_model /app/ai_model
+COPY local_ai_worker/worker ./worker
+
+RUN useradd --system --uid 10001 --home-dir /app worker \
+ && mkdir -p runtime/logs runtime/state \
+ && chown -R worker:worker runtime
+USER worker
+
+ENV MODEL_MODULE_PATH=/app/ai_model \
+    WORKER_LOG_DIR=/app/local_ai_worker/runtime/logs \
+    WORKER_STATE_DIR=/app/local_ai_worker/runtime/state
+
+CMD ["python", "-m", "worker", "watch", "--interval", "3"]

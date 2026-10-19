@@ -1,5 +1,7 @@
 # Panduan Deploy Tandurai ke Server + Integrasi Hardware
 
+> **Cara yang disarankan sekarang: Docker di 1 VM GCP**, lihat [`PANDUAN_DEPLOY_DOCKER_GCP.md`](PANDUAN_DEPLOY_DOCKER_GCP.md). Model AI sudah ada di repo (`ai_model/`), jadi folder `Modul AI Aitoma` tidak perlu disalin ke server. Panduan systemd di bawah tetap berlaku sebagai alternatif tanpa Docker; bagian integrasi hardware (§12) berlaku untuk keduanya.
+
 Dari server kosong sampai gateway ESP32 mengirim data ke dashboard. Contoh memakai **Ubuntu 24.04** dan domain `tandurai.id`; ganti dengan milik Anda.
 
 | Alamat | Untuk |
