@@ -20,6 +20,24 @@ Jadwal & aturan otomatis **disimpan di NVS dan dijalankan ESP32 sendiri**; cloud
 
 **Menambah gateway baru tidak perlu menulis kode lagi.** Firmware yang sama di-flash ke semua unit; tiap unit hanya diberi kredensialnya sendiri.
 
+## Broker produksi (sudah berjalan)
+
+| Parameter | Nilai |
+|---|---|
+| Host | `mqtt.tandurai.id` |
+| Port | **8883** (TLS wajib; 1883 tidak dibuka ke internet) |
+| CA sertifikat | **ISRG Root X1** (Let's Encrypt, kunci RSA), sudah ditanam di firmware referensi; berlaku s.d. 2035 |
+| Login | clientId = username = `hwUid`, password = `deviceSecret` (dari *file setup* `.json`) |
+
+Firmware referensi (`esp32-gw/0.3.0`) memakai nilai ini sebagai bawaan halaman setup, jadi tiap unit cukup diisi Wi-Fi, `hwUid`, dan `deviceSecret`. Firmware buatan sendiri wajib memverifikasi sertifikat server (`WiFiClientSecure::setCACert`) — jangan `setInsecure()` di produksi — dan baru tersambung TLS setelah jam SNTP sinkron.
+
+Cek perangkat di server produksi (dijalankan admin di VM):
+
+```bash
+cd /home/service/tandurai/deploy
+sudo docker compose exec api node apps/api/tools/device-check.mjs --hw-uid TDR-XXXXXXXXXXXX --seconds 120
+```
+
 ## Ringkasan alur (5 langkah)
 
 | # | Siapa | Langkah | Hasil |
@@ -116,6 +134,9 @@ Dashboard → **Devices** → **Tambah gateway** → UID + kode klaim dari label
 | Gejala | Penyebab umum | Cek |
 |---|---|---|
 | Tidak ada pesan sama sekali | Wi-Fi, host/port broker salah, firewall | log broker; ping host dari jaringan perangkat |
+| Serial: `[mqtt] gagal tersambung … err -x` | TCP/TLS gagal: port 8883 diblokir jaringan lokasi, TLS tidak dicentang, CA salah | coba dari jaringan lain (hotspot HP); pastikan TLS + port 8883 |
+| Serial: `… rc 4` / `rc 5` | hwUid / device secret ditolak broker | isi ulang dari `<hwUid>.json` (tahan BOOT 3 dtk) |
+| Tidak pernah mencoba tersambung (tanpa log `[mqtt]`) | jam belum sinkron: NTP (UDP 123) diblokir jaringan | izinkan NTP keluar, atau pakai server NTP lokal di `configTime` |
 | Log broker: `device secret salah` | secret salah ketik / dari unit lain | buka halaman setup (tahan BOOT 3 dtk), isi ulang dari `<hwUid>.json` |
 | Log broker: `clientId … harus sama dengan username` | clientId acak/default library | clientId = hwUid |
 | Log broker: `publish ditolak ACL` | topic salah ketik / hwUid lain | topic `tandurai/gw/<hwUid>/<jenis>` |

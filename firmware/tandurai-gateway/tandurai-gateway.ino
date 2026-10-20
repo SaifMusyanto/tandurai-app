@@ -9,9 +9,13 @@
  *
  * SATU firmware untuk semua unit: tidak ada kredensial di kode. Saat pertama menyala (atau tombol
  * BOOT ditahan 3 dtk saat dinyalakan) gateway membuka Wi-Fi "Tandurai-Setup-XXXX"; buka 192.168.4.1
- * dari HP lalu isi Wi-Fi + hwUid + device secret + broker (dari file <hwUid>.json tool pabrik).
+ * dari HP lalu isi Wi-Fi + hwUid + device secret (dari file <hwUid>.json menu Registrasi Perangkat).
  * Nilai disimpan di NVS.
  * Yang disesuaikan tim hardware sekali saja: bagian HARDWARE (pin) dan readSensor().
+ *
+ * Broker produksi: mqtts://mqtt.tandurai.id:8883 (TLS wajib, sudah jadi nilai bawaan halaman setup).
+ * Sertifikat server diverifikasi dengan CA ISRG Root X1 yang ditanam di bawah (berlaku s.d. 2035).
+ * TLS tanpa verifikasi (setInsecure) hanya aktif bila TANDURAI_ALLOW_INSECURE_TLS di-#define untuk uji.
  */
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -22,12 +26,55 @@
 #include <time.h>
 #include <sys/time.h>
 #if __has_include("ca_cert.h")
-#include "ca_cert.h"   // opsional: #define TANDURAI_CA_CERT "-----BEGIN CERTIFICATE-----..." untuk TLS produksi
+#include "ca_cert.h"   // opsional: #define TANDURAI_CA_CERT "..." untuk mengganti CA bawaan di bawah
 #endif
 
-#define FIRMWARE_VERSION "esp32-gw/0.2.0"
+#define FIRMWARE_VERSION "esp32-gw/0.3.0"
 #define TANDURAI_MODEL "TDR-GW1"
 const int SETUP_BUTTON_PIN = 0;   // tombol BOOT ESP32
+
+// ─────────────────────────── BROKER PRODUKSI ───────────────────────────
+// Nilai bawaan halaman setup; tetap bisa diganti per unit (mis. broker lokal saat uji).
+const char *DEFAULT_MQTT_HOST = "mqtt.tandurai.id";
+const int DEFAULT_MQTT_PORT = 8883;
+const bool DEFAULT_MQTT_TLS = true;
+
+#ifndef TANDURAI_CA_CERT
+// ISRG Root X1 (Let's Encrypt), SHA-256 96:BC:EC:06:26:49:76:F3:74:60:77:9A:CF:28:C5:A7:CF:E8:A3:C0:AA:E1:1A:8F:FC:EE:05:C0:BD:DF:08:C6
+#define TANDURAI_CA_CERT ISRG_ROOT_X1
+static const char ISRG_ROOT_X1[] = R"PEM(-----BEGIN CERTIFICATE-----
+MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
+TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
+cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4
+WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu
+ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY
+MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc
+h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+
+0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U
+A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW
+T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH
+B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC
+B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv
+KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn
+OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn
+jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw
+qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI
+rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV
+HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq
+hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL
+ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ
+3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK
+NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5
+ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur
+TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC
+jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc
+oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq
+4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA
+mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
+emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
+-----END CERTIFICATE-----
+)PEM";
+#endif
 
 // ─────────────────────────── HARDWARE (sesuaikan) ───────────────────────────
 struct SensorDef { const char *id; const char *type; };
@@ -64,7 +111,7 @@ const int MAX_RULES = 8;
 const int EXECUTED_IDS = 50;
 
 // Kredensial per unit (disimpan di NVS lewat halaman setup).
-struct Credentials { String wifiSsid, wifiPassword, hwUid, deviceSecret, mqttHost; int mqttPort = 1883; bool tls = false; };
+struct Credentials { String wifiSsid, wifiPassword, hwUid, deviceSecret, mqttHost; int mqttPort = DEFAULT_MQTT_PORT; bool tls = DEFAULT_MQTT_TLS; };
 Credentials creds;
 
 String topicOf(const char *kind) { return String("tandurai/gw/") + creds.hwUid + "/" + kind; }
@@ -441,6 +488,7 @@ void processQueue() {
 
 void connectMqtt() {
   if (WiFi.status() != WL_CONNECTED || millis() - lastReconnect < reconnectDelay) return;
+  if (creds.tls && !clockSynced()) return;                      // TLS memeriksa masa berlaku sertifikat → tunggu SNTP
   lastReconnect = millis();
   mqtt.setWill(topicOf("status").c_str(), "{\"online\":false}", true, 1);
   if (mqtt.connect(creds.hwUid.c_str(), creds.hwUid.c_str(), creds.deviceSecret.c_str())) {
@@ -453,6 +501,8 @@ void connectMqtt() {
     sampleAndPublishTelemetry();
     lastHeartbeat = lastTelemetry = millis();
   } else {
+    // err negatif = gagal jaringan/TLS (host, port 8883, firewall, CA); rc 4/5 = hwUid/secret ditolak broker.
+    Serial.printf("[mqtt] gagal tersambung ke %s:%d (err %d, rc %d)\n", creds.mqttHost.c_str(), creds.mqttPort, mqtt.lastError(), mqtt.returnCode());
     reconnectDelay = min<uint32_t>(reconnectDelay * 2, 30000) + random(0, 1000);   // backoff + jitter
   }
 }
@@ -462,7 +512,7 @@ bool loadCredentials() {
   Preferences p; p.begin("tdr-creds", true);
   creds.wifiSsid = p.getString("ssid", ""); creds.wifiPassword = p.getString("pass", "");
   creds.hwUid = p.getString("hwUid", ""); creds.deviceSecret = p.getString("secret", "");
-  creds.mqttHost = p.getString("host", ""); creds.mqttPort = p.getInt("port", 1883); creds.tls = p.getBool("tls", false);
+  creds.mqttHost = p.getString("host", DEFAULT_MQTT_HOST); creds.mqttPort = p.getInt("port", DEFAULT_MQTT_PORT); creds.tls = p.getBool("tls", DEFAULT_MQTT_TLS);
   p.end();
   return creds.wifiSsid.length() && creds.hwUid.length() && creds.deviceSecret.length() && creds.mqttHost.length();
 }
@@ -485,6 +535,7 @@ void runSetupPortal() {
     page += "<label>Broker host<input name=host required value=\"" + htmlEscape(creds.mqttHost) + "\"></label>";
     page += "<label>Broker port<input name=port type=number value=\"" + String(creds.mqttPort) + "\"></label>";
     page += String("<label><input name=tls type=checkbox style=width:auto") + (creds.tls ? " checked" : "") + "> TLS</label>";
+    page += String(F("<p><small>Produksi: ")) + DEFAULT_MQTT_HOST + ", port " + DEFAULT_MQTT_PORT + F(", TLS dicentang.</small></p>");
     page += F("<p><button type=submit>Simpan &amp; restart</button></p></form>");
     server.send(200, "text/html", page);
   });
@@ -492,8 +543,9 @@ void runSetupPortal() {
     Preferences p; p.begin("tdr-creds", false);
     p.putString("ssid", server.arg("ssid")); p.putString("pass", server.arg("pass"));
     p.putString("hwUid", server.arg("hwUid")); p.putString("secret", server.arg("secret"));
-    p.putString("host", server.arg("host")); p.putInt("port", server.arg("port").toInt() > 0 ? server.arg("port").toInt() : 1883);
-    p.putBool("tls", server.hasArg("tls"));
+    bool tls = server.hasArg("tls");
+    p.putString("host", server.arg("host")); p.putInt("port", server.arg("port").toInt() > 0 ? server.arg("port").toInt() : (tls ? 8883 : 1883));
+    p.putBool("tls", tls);
     p.end();
     server.send(200, "text/html", "<p>Tersimpan. Gateway restart...</p>");
     delay(1500);
@@ -528,10 +580,10 @@ void setup() {
   WiFi.begin(creds.wifiSsid.c_str(), creds.wifiPassword.c_str());
   configTime(0, 0, "pool.ntp.org", "time.google.com");
   if (creds.tls) {
-#ifdef TANDURAI_CA_CERT
-    secureNet.setCACert(TANDURAI_CA_CERT);
+#ifdef TANDURAI_ALLOW_INSECURE_TLS
+    secureNet.setInsecure();                                    // HANYA untuk uji: sertifikat server tidak diverifikasi
 #else
-    secureNet.setInsecure();                                    // HANYA untuk uji; produksi wajib CA cert (ca_cert.h)
+    secureNet.setCACert(TANDURAI_CA_CERT);                      // verifikasi rantai + nama host mqtt.tandurai.id
 #endif
     mqtt.begin(creds.mqttHost.c_str(), creds.mqttPort, secureNet);
   } else {
