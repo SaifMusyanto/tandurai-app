@@ -1,7 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet';
-import { Copy, Download, Eye, EyeOff, Loader2, Plus, RefreshCw, ShieldAlert, Wifi, WifiOff } from 'lucide-react';
+import { Copy, Download, Eye, EyeOff, Loader2, Plus, RefreshCw, ShieldAlert, Unlink, Wifi, WifiOff } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import DataTable from '@/components/DataTable';
 import { useFarmContext } from '@/contexts/FarmContext';
 import { api } from '@/lib/api';
+import { iotApi } from '@/lib/iotApi';
 
 const copy = async (text, label) => {
   try {
@@ -54,6 +59,8 @@ export default function AdminDevicesPage() {
   const [created, setCreated] = useState([]);
   const [registry, setRegistry] = useState({ broker: null, devices: [] });
   const [loading, setLoading] = useState(true);
+  const [unclaimTarget, setUnclaimTarget] = useState(null);
+  const [unclaiming, setUnclaiming] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -89,6 +96,22 @@ export default function AdminDevicesPage() {
       toast.error(error.message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Admin diperlakukan sebagai owner di semua farm, jadi endpoint lepas gateway yang sama dapat dipakai.
+  const doUnclaim = async event => {
+    event.preventDefault();
+    setUnclaiming(true);
+    try {
+      await iotApi.unclaim(unclaimTarget.hwUid);
+      toast.success(`${unclaimTarget.hwUid} dilepas dari ${unclaimTarget.farmName || unclaimTarget.farmId}.`);
+      setUnclaimTarget(null);
+      load();
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setUnclaiming(false);
     }
   };
 
@@ -200,11 +223,34 @@ export default function AdminDevicesPage() {
                 },
                 { key: 'farm', hideOnMobile: true, header: 'Diklaim', className: 'text-xs', cell: item => item.farmName || item.farmId || <span className="text-muted-foreground">Belum</span> },
                 { key: 'created', hideOnMobile: true, header: 'Didaftarkan', className: 'text-xs text-muted-foreground whitespace-nowrap', cell: item => new Date(item.createdAt).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) },
+                {
+                  key: 'actions', header: <span className="sr-only">Aksi</span>, className: 'text-right whitespace-nowrap', cell: item => (item.farmId
+                    ? <Button size="sm" variant="ghost" className="h-7 text-red-600 hover:text-red-700" onClick={() => setUnclaimTarget(item)}><Unlink size={12} className="mr-1" />Lepas</Button>
+                    : null),
+                },
               ]}
             />
           </CardContent>
         </Card>
       </div>
+
+      <AlertDialog open={Boolean(unclaimTarget)} onOpenChange={value => !value && !unclaiming && setUnclaimTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Lepas {unclaimTarget?.hwUid} dari {unclaimTarget?.farmName || unclaimTarget?.farmId}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Gateway berhenti menjalankan otomasi dan seluruh relay dimatikan. Data sensor, histori, dan riwayat perintah gateway ini dihapus dari farm tersebut.
+              Tindakan ini tercatat atas nama Anda di audit farm. Perangkat dapat diklaim lagi dengan kode klaim yang sama.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={unclaiming}>Batal</AlertDialogCancel>
+            <AlertDialogAction onClick={doUnclaim} disabled={unclaiming} className="bg-red-600 hover:bg-red-700 text-white">
+              {unclaiming && <Loader2 size={15} className="mr-1.5 animate-spin" />}Lepas gateway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

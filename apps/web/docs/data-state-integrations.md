@@ -95,7 +95,7 @@ Alert dievaluasi backend saat telemetry masuk (suhu tinggi, kelembapan rendah, C
   - Ringkasan Sistem (`GET /admin/overview`): angka utama, kesehatan layanan, alert kritis, gateway offline, sensor tanpa data, pengguna terbaru;
   - Farm & Klien (`GET /admin/farms`, `/admin/farms/:id`);
   - Pengguna (`GET /admin/users`);
-  - Registrasi Perangkat.
+  - Registrasi Perangkat (`GET/POST /admin/devices`); gateway yang sudah diklaim punya aksi "Lepas" (`DELETE /gateways/:id`, sama dengan owner) tanpa perlu membuka farm klien.
 - **Membuka farm klien:** "Buka dashboard farm" (`enterFarmAsAdmin`) menyimpan mode farm di `sessionStorage` (`tandurai.adminFarmView`, per tab) dan menampilkan banner "Mode admin". "Kembali ke Konsol Admin" atau membuka rute `/admin` keluar dari mode farm. Perubahan oleh admin tercatat dengan uid admin di audit farm.
 - Pengguna biasa yang membuka `/admin*` diarahkan ke `/`; backend tetap menolak dengan 403.
 
