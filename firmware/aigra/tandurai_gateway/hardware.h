@@ -28,13 +28,15 @@
 #define PIN_SCL   22
 #define SLIDE_INTERVAL_S 5        // slide berganti otomatis tiap 5 detik
 
-// ================= Sensor RS485 (RS-O2WS-N01, Modbus RTU) =================
+// ================= Sensor RS485 (CO₂ + suhu + kelembapan, Modbus RTU) =================
+// Pengganti RS-O2WS-N01. Register: 0 = kelembapan ×10, 1 = suhu ×10, RS485_CO2_REG = CO₂ (ppm, tanpa skala).
 #define USE_RS485       true      // modul RS485-TTL sudah terpasang
 #define PIN_RS485_RX    16        // ke RO / RXD modul RS485
 #define PIN_RS485_TX    17        // ke DI / TXD modul RS485
 #define PIN_RS485_DE    -1        // -1 = modul auto-direction (tanpa pin DE/RE). MAX485: isi 4
 #define RS485_BAUD      4800      // default pabrik
 #define RS485_ADDR      1         // default pabrik
+#define RS485_CO2_REG   2         // alamat register CO₂ (lihat datasheet; sebagian varian memakai 5). Maks 7
 #define RS485_POLL_S    5         // baca sensor tiap 5 detik
 #define RS485_PRINT_S   30        // tampilkan di Serial tiap 30 detik
 #define RS485_LOST_FAILS 3        // dianggap terputus setelah 3x gagal berturut-turut

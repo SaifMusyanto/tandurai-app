@@ -77,7 +77,7 @@ void drawRs485Slide() {
   char line[24];
   drawHeader("Source : RS485");
   oled.setFont(u8g2_font_7x13_tf);
-  snprintf(line, sizeof line, "O2   : %.1f %%VOL", rs.o2);  oled.drawStr(0, 24, line);
+  snprintf(line, sizeof line, "CO2  : %.0f ppm", rs.co2);   oled.drawStr(0, 24, line);
   snprintf(line, sizeof line, "Suhu : %.1f C", rs.temp);    oled.drawStr(0, 37, line);
   snprintf(line, sizeof line, "Humy : %.1f %%RH", rs.hum);  oled.drawStr(0, 50, line);
 }

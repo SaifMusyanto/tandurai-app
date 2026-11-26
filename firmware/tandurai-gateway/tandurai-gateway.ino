@@ -1,21 +1,26 @@
 /*
  * Firmware REFERENSI gateway Tandurai (ESP32 + Arduino core).
  * Mengikuti docs/KONTRAK_MQTT_GATEWAY.md; perilaku sama dengan simulator apps/api/tools/mqtt-gateway-sim.mjs.
- * STATUS: belum dikompilasi/diuji di hardware — titik awal untuk tim hardware, bukan firmware produksi final.
+ * STATUS: lolos compile (arduino-esp32 3.3.x); belum diuji di hardware — titik awal untuk tim hardware.
+ * Versi board Aigra yang sudah dipakai di lapangan: firmware/aigra/tandurai_gateway/.
  *
  * Library (Library Manager):
  *   - "MQTT" oleh Joel Gaehwiler (256dpi/arduino-mqtt)  → mendukung publish QoS1 + LWT retained
  *   - "ArduinoJson" v7 oleh Benoit Blanchon
  *
  * SATU firmware untuk semua unit: tidak ada kredensial di kode. Saat pertama menyala (atau tombol
- * BOOT ditahan 3 dtk saat dinyalakan) gateway membuka Wi-Fi "Tandurai-Setup-XXXX"; buka 192.168.4.1
+ * BOOT ditahan 3 dtk dalam 3 dtk pertama SETELAH menyala — menahan BOOT saat listrik masuk membuat
+ * ESP32 masuk mode download) gateway membuka Wi-Fi "Tandurai-Setup-XXXX"; buka 192.168.4.1
  * dari HP lalu isi Wi-Fi + hwUid + device secret (dari file <hwUid>.json menu Registrasi Perangkat).
  * Nilai disimpan di NVS.
  * Yang disesuaikan tim hardware sekali saja: bagian HARDWARE (pin) dan readSensor().
  *
  * Broker produksi: mqtts://mqtt.tandurai.id:8883 (TLS wajib, sudah jadi nilai bawaan halaman setup).
- * Sertifikat server diverifikasi dengan CA ISRG Root X1 yang ditanam di bawah (berlaku s.d. 2035).
+ * Sertifikat server diverifikasi dengan CA ISRG Root X1 + X2 yang ditanam di bawah (berlaku s.d. 2035/2040).
  * TLS tanpa verifikasi (setInsecure) hanya aktif bila TANDURAI_ALLOW_INSECURE_TLS di-#define untuk uji.
+ * Update firmware lewat internet (OTA) dengan perintah "ota" di topic cmd (ota.h); butuh partisi dengan
+ * OTA: Tools → Partition Scheme → "Minimal SPIFFS (1.9MB APP with OTA)" (PartitionScheme=min_spiffs).
+ * Watchdog, alasan restart, dan penghitung putus koneksi ada di diag.h.
  */
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -28,8 +33,15 @@
 #if __has_include("ca_cert.h")
 #include "ca_cert.h"   // opsional: #define TANDURAI_CA_CERT "..." untuk mengganti CA bawaan di bawah
 #endif
+#include "diag.h"
+#include "ota.h"
 
-#define FIRMWARE_VERSION "esp32-gw/0.3.0"
+// Arduino menyisipkan prototipe fungsi otomatis sebelum fungsi pertama (readSensor), yaitu sebelum
+// struct di bawah didefinisikan; deklarasi awal ini membuat prototipe tersebut valid.
+struct Schedule;
+struct LocalClock;
+
+#define FIRMWARE_VERSION "esp32-gw/0.4.0"
 #define TANDURAI_MODEL "TDR-GW1"
 const int SETUP_BUTTON_PIN = 0;   // tombol BOOT ESP32
 
@@ -40,7 +52,8 @@ const int DEFAULT_MQTT_PORT = 8883;
 const bool DEFAULT_MQTT_TLS = true;
 
 #ifndef TANDURAI_CA_CERT
-// ISRG Root X1 (Let's Encrypt), SHA-256 96:BC:EC:06:26:49:76:F3:74:60:77:9A:CF:28:C5:A7:CF:E8:A3:C0:AA:E1:1A:8F:FC:EE:05:C0:BD:DF:08:C6
+// ISRG Root X1 (Let's Encrypt, rantai sertifikat RSA), SHA-256 96:BC:EC:06:26:49:76:F3:74:60:77:9A:CF:28:C5:A7:CF:E8:A3:C0:AA:E1:1A:8F:FC:EE:05:C0:BD:DF:08:C6
+// ISRG Root X2 (Let's Encrypt, rantai ECDSA mis. sertifikat Nginx Proxy Manager), SHA-256 69:72:9B:8E:15:A8:6E:FC:17:7A:57:AF:B7:17:1D:FC:64:AD:D2:8C:2F:CA:8C:F1:50:7E:34:45:3C:CB:14:70
 #define TANDURAI_CA_CERT ISRG_ROOT_X1
 static const char ISRG_ROOT_X1[] = R"PEM(-----BEGIN CERTIFICATE-----
 MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
@@ -72,6 +85,20 @@ oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq
 4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA
 mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
 emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIICGzCCAaGgAwIBAgIQQdKd0XLq7qeAwSxs6S+HUjAKBggqhkjOPQQDAzBPMQsw
+CQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJuZXQgU2VjdXJpdHkgUmVzZWFyY2gg
+R3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBYMjAeFw0yMDA5MDQwMDAwMDBaFw00
+MDA5MTcxNjAwMDBaME8xCzAJBgNVBAYTAlVTMSkwJwYDVQQKEyBJbnRlcm5ldCBT
+ZWN1cml0eSBSZXNlYXJjaCBHcm91cDEVMBMGA1UEAxMMSVNSRyBSb290IFgyMHYw
+EAYHKoZIzj0CAQYFK4EEACIDYgAEzZvVn4CDCuwJSvMWSj5cz3es3mcFDR0HttwW
++1qLFNvicWDEukWVEYmO6gbf9yoWHKS5xcUy4APgHoIYOIvXRdgKam7mAHf7AlF9
+ItgKbppbd9/w+kHsOdx1ymgHDB/qo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0T
+AQH/BAUwAwEB/zAdBgNVHQ4EFgQUfEKWrt5LSDv6kviejM9ti6lyN5UwCgYIKoZI
+zj0EAwMDaAAwZQIwe3lORlCEwkSHRhtFcP9Ymd70/aTSVaYgLXTWNLxBo1BfASdW
+tL4ndQavEi51mI38AjEAi/V3bNTIZargCyzuFJ0nN6T5U6VR5CmD1/iQMVtCnwr1
+/q4AaOeMSQ+2b1tbFfLn
 -----END CERTIFICATE-----
 )PEM";
 #endif
@@ -221,6 +248,7 @@ void publishRegister() {
 void publishStatus() {
   JsonDocument doc;
   doc["online"] = true; doc["firmware"] = FIRMWARE_VERSION; doc["configVersion"] = configVersion; doc["uptimeSec"] = millis() / 1000;
+  diag::fill(doc["diag"].to<JsonObject>());
   publishJson("status", doc, true, 1);
 }
 
@@ -299,8 +327,27 @@ void parseConfig(JsonDocument &doc) {
   }
 }
 
+// Config disimpan sebagai blob: string NVS maksimal 4000 byte, sedangkan config penuh
+// (3 aktuator × 12 jadwal, batas backend) ±4,7 KB.
+String readStoredConfig() {
+  if (!nvs.isKey("cfg")) return nvs.isKey("config") ? nvs.getString("config", "") : String();   // format ≤ 0.3.x
+  size_t len = nvs.getBytesLength("cfg");
+  char *buf = (char *)malloc(len + 1);
+  if (!buf) return String();
+  nvs.getBytes("cfg", buf, len); buf[len] = 0;
+  String raw = buf; free(buf);
+  return raw;
+}
+
+bool storeConfig(const String &payload) {
+  bool ok = nvs.putBytes("cfg", payload.c_str(), payload.length()) == payload.length();
+  if (ok && nvs.isKey("config")) nvs.remove("config");
+  if (!ok) Serial.printf("[nvs] GAGAL menyimpan config %u byte (NVS penuh?): jadwal/aturan hanya di RAM sampai restart\n", (unsigned)payload.length());
+  return ok;
+}
+
 void loadConfigFromNvs() {
-  String raw = nvs.getString("config", "");
+  String raw = readStoredConfig();
   if (!raw.length()) return;
   JsonDocument doc;
   if (deserializeJson(doc, raw)) return;
@@ -315,8 +362,8 @@ void handleConfig(const String &payload) {
   if (version < 0 || version < configVersion) return;          // retained usang → abaikan
   bool changed = version != configVersion;
   if (changed) {
-    String previous = nvs.getString("config", "");
-    nvs.putString("config", payload);                           // simpan ke NVS dulu
+    String previous = readStoredConfig();
+    storeConfig(payload);                                       // simpan ke NVS dulu
     configVersion = version;
     JsonDocument old; deserializeJson(old, previous);
     for (int i = 0; i < ACTUATOR_COUNT; i++) {
@@ -381,6 +428,7 @@ void handleCommand(const String &payload) {
   if (!clockSynced()) return ackCommand(id, -1, "rejected", "no_clock");
   uint64_t expiresAt = doc["expiresAt"] | 0ULL;
   if (!expiresAt || epochMs() > expiresAt) return ackCommand(id, -1, "expired", "expired");
+  if (!strcmp(doc["action"] | "", "ota")) return handleOtaCommand(id, doc);
   int i = actuatorIndex(doc["actuator"] | "");
   if (i < 0) return ackCommand(id, -1, "rejected", "unknown_actuator");
   String action = doc["action"] | "";
@@ -396,6 +444,42 @@ void handleCommand(const String &payload) {
     return ackCommand(id, i, "success", nullptr);
   }
   ackCommand(id, i, "rejected", "invalid_action");
+}
+
+// ─────────────────────────── UPDATE FIRMWARE (OTA) ───────────────────────────
+ota::Job otaJob;
+bool otaPending = false;
+String otaFailId, otaFailReason;                                 // dilaporkan setelah MQTT tersambung lagi
+
+void publishOtaAck(const String &id, const char *status, const char *reason, const String &version) {
+  JsonDocument ack;
+  ack["type"] = "ota"; ack["id"] = id; ack["status"] = status; ack["version"] = version;
+  if (reason) ack["reason"] = reason; else ack["reason"] = nullptr;
+  publishJson("ack", ack, false, 1);
+}
+
+void handleOtaCommand(const String &id, JsonDocument &doc) {
+  ota::Job job;
+  job.id = id; job.url = doc["url"] | ""; job.sha256 = doc["sha256"] | ""; job.version = doc["version"] | ""; job.size = doc["size"] | 0;
+  const char *reason = otaPending ? "busy" : ota::check(job, FIRMWARE_VERSION, !creds.tls);
+  rememberExecuted(id);
+  publishOtaAck(id, reason ? "rejected" : "started", reason, job.version);
+  if (reason) return;
+  otaJob = job; otaPending = true;                              // dijalankan di loop() setelah ACK terkirim
+}
+
+void otaProgress(int percent) { Serial.printf("[ota] %d%%\n", percent); }
+
+void runOta() {
+  otaPending = false;
+  for (int i = 0; i < ACTUATOR_COUNT; i++) if (relays[i].on) setRelay(i, false, "ota");   // timer relay berhenti selama download
+  publishState();
+  mqtt.disconnect();                                            // bebaskan memori & koneksi TLS untuk download
+  Serial.printf("[ota] download %s\n", otaJob.url.c_str());
+  String error = ota::download(otaJob, secureNet, plainNet, otaProgress);
+  if (!error.length()) { Serial.println("[ota] selesai, restart"); delay(500); ESP.restart(); }
+  Serial.printf("[ota] gagal: %s\n", error.c_str());
+  otaFailId = otaJob.id; otaFailReason = error;
 }
 
 // ─────────────────────────── ENGINE LOKAL (jalan walau offline) ───────────────────────────
@@ -500,6 +584,7 @@ void connectMqtt() {
     publishState();
     sampleAndPublishTelemetry();
     lastHeartbeat = lastTelemetry = millis();
+    if (otaFailId.length()) { publishOtaAck(otaFailId, "failed", otaFailReason.c_str(), otaJob.version); otaFailId = ""; }
   } else {
     // err negatif = gagal jaringan/TLS (host, port 8883, firewall, CA); rc 4/5 = hwUid/secret ditolak broker.
     Serial.printf("[mqtt] gagal tersambung ke %s:%d (err %d, rc %d)\n", creds.mqttHost.c_str(), creds.mqttPort, mqtt.lastError(), mqtt.returnCode());
@@ -529,9 +614,10 @@ void runSetupPortal() {
       "<style>body{font-family:sans-serif;max-width:420px;margin:24px auto;padding:0 12px}label{display:block;margin-top:10px}input{width:100%;padding:8px}</style>"
       "<h2>Setup Gateway Tandurai</h2><form method=post action=/save>");
     page += "<label>Wi-Fi SSID<input name=ssid required value=\"" + htmlEscape(creds.wifiSsid) + "\"></label>";
-    page += F("<label>Wi-Fi password<input name=pass type=password></label>");
+    page += String("<label>Wi-Fi password<input name=pass type=password") + (creds.wifiPassword.length() ? " placeholder=tersimpan" : "") + "></label>";
     page += "<label>hwUid<input name=hwUid required value=\"" + htmlEscape(creds.hwUid) + "\"></label>";
-    page += F("<label>Device secret<input name=secret type=password required></label>");
+    page += String("<label>Device secret<input name=secret type=password") + (creds.deviceSecret.length() ? " placeholder=tersimpan" : " required") + "></label>";
+    page += F("<p><small>Password/secret dikosongkan = nilai tersimpan tidak diubah (kecuali SSID atau hwUid diganti).</small></p>");
     page += "<label>Broker host<input name=host required value=\"" + htmlEscape(creds.mqttHost) + "\"></label>";
     page += "<label>Broker port<input name=port type=number value=\"" + String(creds.mqttPort) + "\"></label>";
     page += String("<label><input name=tls type=checkbox style=width:auto") + (creds.tls ? " checked" : "") + "> TLS</label>";
@@ -540,9 +626,17 @@ void runSetupPortal() {
     server.send(200, "text/html", page);
   });
   server.on("/save", HTTP_POST, [&]() {
+    String ssid = server.arg("ssid"), pass = server.arg("pass"), hwUid = server.arg("hwUid"), secret = server.arg("secret");
+    // Secret wajib bila belum tersimpan atau hwUid diganti (secret lama milik hwUid lain).
+    if (!secret.length() && (!creds.deviceSecret.length() || hwUid != creds.hwUid)) {
+      server.send(400, "text/html", "<p>Device secret wajib diisi (belum tersimpan atau hwUid diganti). <a href=/>Kembali</a></p>");
+      return;
+    }
     Preferences p; p.begin("tdr-creds", false);
-    p.putString("ssid", server.arg("ssid")); p.putString("pass", server.arg("pass"));
-    p.putString("hwUid", server.arg("hwUid")); p.putString("secret", server.arg("secret"));
+    p.putString("ssid", ssid);
+    if (pass.length() || ssid != creds.wifiSsid) p.putString("pass", pass);   // SSID baru boleh tanpa password (Wi-Fi terbuka)
+    p.putString("hwUid", hwUid);
+    if (secret.length()) p.putString("secret", secret);
     bool tls = server.hasArg("tls");
     p.putString("host", server.arg("host")); p.putInt("port", server.arg("port").toInt() > 0 ? server.arg("port").toInt() : (tls ? 8883 : 1883));
     p.putBool("tls", tls);
@@ -556,48 +650,74 @@ void runSetupPortal() {
   for (;;) { server.handleClient(); delay(5); }   // relay tetap OFF selama setup
 }
 
+// BOOT (GPIO0) tidak bisa ditahan saat listrik masuk: chip malah masuk mode download.
+// Jadi setelah boot ada jendela 3 dtk; tekan & tahan BOOT 3 dtk di dalam jendela ini → mode setup.
+// Board tanpa akses tombol (di dalam casing): lihat versi Aigra (saklar power OFF-ON 3×).
 bool setupButtonHeld() {
   pinMode(SETUP_BUTTON_PIN, INPUT_PULLUP);
-  uint32_t start = millis();
-  while (digitalRead(SETUP_BUTTON_PIN) == LOW) { if (millis() - start > 3000) return true; delay(10); }
+  Serial.println("[setup] tahan BOOT 3 dtk sekarang untuk mode setup");
+  uint32_t windowStart = millis();
+  while (millis() - windowStart < 3000) {
+    if (digitalRead(SETUP_BUTTON_PIN) == LOW) {
+      uint32_t pressStart = millis();
+      while (digitalRead(SETUP_BUTTON_PIN) == LOW) { if (millis() - pressStart > 3000) return true; delay(10); }
+    }
+    delay(10);
+  }
   return false;
 }
 
+// ESP32 tidak mencoba ulang sendiri bila hotspot/router belum menyala saat boot (mis. setelah listrik padam).
+void maintainWifi() {
+  static uint32_t lastAttempt = 0;
+  if (WiFi.status() == WL_CONNECTED || millis() - lastAttempt < 15000) return;
+  lastAttempt = millis();
+  // status 1 = SSID tidak ditemukan (hotspot mati / 5 GHz), 4 = gagal konek (password salah)
+  Serial.printf("[wifi] belum tersambung ke \"%s\" (status %d), mencoba lagi\n", creds.wifiSsid.c_str(), WiFi.status());
+  WiFi.disconnect();
+  WiFi.begin(creds.wifiSsid.c_str(), creds.wifiPassword.c_str());
+}
+
 void setup() {
-  Serial.begin(115200);
-  for (int i = 0; i < ACTUATOR_COUNT; i++) {                    // relay OFF saat boot (safe state)
-    pinMode(ACTUATORS[i].pin, OUTPUT); writePin(i, false);
+  for (int i = 0; i < ACTUATOR_COUNT; i++) {                    // relay OFF saat boot (safe state), sebelum pin jadi output → tidak klik
+    writePin(i, false); pinMode(ACTUATORS[i].pin, OUTPUT); writePin(i, false);
     for (int k = 0; k < MAX_SCHEDULES; k++) { relays[i].nextEveryMs[k] = 0; relays[i].firedDay[k] = -1; relays[i].firedMinute[k] = -1; }
   }
   for (int i = 0; i < SENSOR_COUNT; i++) { lastReadMillis[i] = 0; for (int k = 0; k < METRIC_COUNT; k++) lastValues[i][k] = NAN; }
   for (int i = 0; i < ACTUATOR_COUNT; i++) { cfg[i] = ActuatorCfg(); cfg[i].mode = 'm'; }
+  Serial.begin(115200);
+  Serial.printf("[boot] %s, restart terakhir: %s\n", FIRMWARE_VERSION, diag::resetReason());
   if (!loadCredentials() || setupButtonHeld()) runSetupPortal();   // belum diisi / tombol BOOT ditahan
   nvs.begin("tandurai", false);
   loadExecuted();
   loadConfigFromNvs();                                          // jadwal/aturan tetap jalan tanpa internet
+  diag::begin();                                                // watchdog aktif mulai di sini
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(creds.wifiSsid.c_str(), creds.wifiPassword.c_str());
   configTime(0, 0, "pool.ntp.org", "time.google.com");
-  if (creds.tls) {
 #ifdef TANDURAI_ALLOW_INSECURE_TLS
-    secureNet.setInsecure();                                    // HANYA untuk uji: sertifikat server tidak diverifikasi
+  secureNet.setInsecure();                                      // HANYA untuk uji: sertifikat server tidak diverifikasi
 #else
-    secureNet.setCACert(TANDURAI_CA_CERT);                      // verifikasi rantai + nama host mqtt.tandurai.id
+  secureNet.setCACert(TANDURAI_CA_CERT);                        // verifikasi rantai + nama host (MQTT & download OTA)
 #endif
-    mqtt.begin(creds.mqttHost.c_str(), creds.mqttPort, secureNet);
-  } else {
-    mqtt.begin(creds.mqttHost.c_str(), creds.mqttPort, plainNet);
-  }
+  // Batas waktu blok (bawaan core: connect 30 dtk, handshake TLS 120 dtk) agar di bawah watchdog.
+  secureNet.setConnectionTimeout(10000); secureNet.setHandshakeTimeout(10);
+  plainNet.setConnectionTimeout(10000);
+  mqtt.begin(creds.mqttHost.c_str(), creds.mqttPort, creds.tls ? (Client &)secureNet : (Client &)plainNet);
   mqtt.setCleanSession(false);
   mqtt.setKeepAlive(20);
   mqtt.onMessage(onMessage);
 }
 
 void loop() {
+  diag::feed();
+  maintainWifi();
   mqtt.loop();
   if (!mqtt.connected()) connectMqtt();
+  diag::track(WiFi.status() == WL_CONNECTED, mqtt.connected(), mqtt.lastError());
   processQueue();
+  if (otaPending) runOta();
   uint32_t now = millis();
   if (now - lastTick >= 1000) { lastTick = now; tick(); }
   if (now - lastTelemetry >= (uint32_t)telemetryIntervalSec * 1000UL) { lastTelemetry = now; sampleAndPublishTelemetry(); }

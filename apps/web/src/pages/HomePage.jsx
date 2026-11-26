@@ -13,6 +13,7 @@ import { auth } from '../firebase';
 import { useKumbungHistory, useKumbungTelemetry } from '@/hooks/useKumbungTelemetry';
 import { PARAMETERS, formatParameter, parameterStatus } from '@/lib/parameters';
 import { useIot } from '@/contexts/IotContext';
+import { api } from '@/lib/api';
 import { useFarmContext } from '@/contexts/FarmContext';
 import DashboardForecastCard from '@/components/DashboardForecastCard';
 import WeatherCard from '@/components/WeatherCard';
@@ -301,9 +302,6 @@ const ChatbotPopup = ({ kpiData, currentWeather, locationName, ranges }) => {
 - Jika ditanya angka perkiraan panen, arahkan pengguna membuka halaman Perkiraan Panen`;
   };
 
-  // Endpoint proxy opsional. Secret provider tidak boleh berada di bundle browser.
-  const chatApiUrl = import.meta.env.VITE_CHAT_API_URL?.trim();
-
   const sendMessage = async (text) => {
     const userText = (text || input).trim();
     if (!userText || isLoading) return;
@@ -313,30 +311,11 @@ const ChatbotPopup = ({ kpiData, currentWeather, locationName, ranges }) => {
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setIsLoading(true);
     try {
-      if (!chatApiUrl) {
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: 'Fitur chat AI sedang dinonaktifkan sampai endpoint proxy yang aman dikonfigurasi. Data sensor dan fitur dashboard tetap dapat digunakan.',
-        }]);
-        return;
-      }
-
-      const response = await fetch(chatApiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          max_tokens: 1000,
-          temperature: 0.7,
-          messages: [
-            { role: 'system', content: buildSystemPrompt() },
-            ...newMessages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
-          ],
-        }),
-      });
-      const data = await response.json();
-      if (data.error) { setMessages(prev => [...prev, { role: 'assistant', content: `❌ Error: ${data.error.message}` }]); return; }
-      const reply = data.choices?.[0]?.message?.content || 'Maaf, tidak ada respons.';
+      // Lewat backend (proxy Groq); API key tidak pernah ada di browser. Kirim 20 pesan terakhir saja.
+      const { reply } = await api.chat([
+        { role: 'system', content: buildSystemPrompt() },
+        ...newMessages.slice(-20).map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
+      ]);
       setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
       if (!isOpen) setUnreadCount(n => n + 1);
     } catch (err) {

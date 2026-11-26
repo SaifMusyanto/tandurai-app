@@ -22,9 +22,9 @@ function LabelRow({ code, detail, label, kumbungs, onChange }) {
   return (
     <div className="grid grid-cols-[3.5rem_1fr] sm:grid-cols-[3.5rem_1fr_11rem] items-center gap-2">
       <span className="font-mono text-xs rounded bg-muted px-1.5 py-1 text-center" title={detail}>{code}</span>
-      <Input value={label.name} onChange={event => onChange({ ...label, name: event.target.value })} maxLength={100} className="h-8 text-sm" aria-label={`Nama ${code}`} />
+      <Input value={label.name} onChange={event => onChange({ ...label, name: event.target.value })} maxLength={100} className="h-9 sm:h-8" aria-label={`Nama ${code}`} />
       <Select value={label.kumbung} onValueChange={kumbung => onChange({ ...label, kumbung })}>
-        <SelectTrigger className="h-8 text-xs col-span-2 sm:col-span-1" aria-label={`Kumbung ${code}`}><SelectValue /></SelectTrigger>
+        <SelectTrigger className="h-9 sm:h-8 text-xs col-start-2 sm:col-start-auto" aria-label={`Kumbung ${code}`}><SelectValue /></SelectTrigger>
         <SelectContent>
           <SelectItem value={FOLLOW}>Ikut kumbung utama</SelectItem>
           <SelectItem value={NONE}>Belum ditempatkan</SelectItem>
@@ -101,7 +101,7 @@ export default function AddGatewayDialog({ open, farm, kumbungs, onClose }) {
 
   return (
     <Dialog open={open} onOpenChange={value => !value && !busy && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[calc(100%-1.5rem)] max-w-2xl max-h-[90dvh] overflow-y-auto rounded-lg p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>Tambah gateway</DialogTitle>
           <DialogDescription>
@@ -120,7 +120,7 @@ export default function AddGatewayDialog({ open, farm, kumbungs, onClose }) {
               <Input id="iot-code" value={claimCode} onChange={event => setClaimCode(event.target.value)} placeholder="K7Q2-M9XD" className="font-mono uppercase" />
             </div>
             {error && <p className="text-sm text-red-600">{error}</p>}
-            <DialogFooter>
+            <DialogFooter className="gap-2 sm:gap-0">
               <Button type="button" variant="outline" onClick={onClose} disabled={busy}>Batal</Button>
               <Button type="submit" disabled={busy || !UID_PATTERN.test(hwUid) || claimCode.replace(/[\s-]/g, '').length !== 8}>
                 {busy ? <Loader2 size={15} className="mr-1.5 animate-spin" /> : <Search size={15} className="mr-1.5" />}
@@ -131,7 +131,7 @@ export default function AddGatewayDialog({ open, farm, kumbungs, onClose }) {
         ) : (
           <form onSubmit={submit} className="space-y-4">
             <div className="rounded-lg border p-3 text-sm">
-              <p className="font-medium">{device.model || 'Gateway'} <span className="font-mono text-xs text-muted-foreground">{device.id}</span></p>
+              <p className="font-medium break-all">{device.model || 'Gateway'} <span className="font-mono text-xs text-muted-foreground">{device.id}</span></p>
               <p className="text-xs text-muted-foreground">
                 Firmware {device.firmware || '—'} · {device.online ? 'online' : 'offline'} · {device.capabilities.sensors?.length || 0} sensor · {device.capabilities.actuators?.length || 0} aktuator
               </p>
@@ -155,7 +155,7 @@ export default function AddGatewayDialog({ open, farm, kumbungs, onClose }) {
             </div>
 
             <div className="space-y-2">
-              <p className="text-sm font-medium flex items-center gap-1"><Radio size={14} /> Sensor <span className="text-xs font-normal text-muted-foreground">(masing-masing membaca {['temperature', 'humidity', 'co2'].map(metric => METRIC_LABEL[metric]).join(', ')})</span></p>
+              <p className="text-sm font-medium flex flex-wrap items-center gap-1"><Radio size={14} /> Sensor <span className="text-xs font-normal text-muted-foreground">(masing-masing membaca {['temperature', 'humidity', 'co2'].map(metric => METRIC_LABEL[metric]).join(', ')})</span></p>
               {(device.capabilities.sensors || []).map(sensor => (
                 <LabelRow key={sensor.id} code={sensor.id} detail={sensor.type} label={labels.sensors[sensor.id]} kumbungs={kumbungs}
                   onChange={label => setLabels(current => ({ ...current, sensors: { ...current.sensors, [sensor.id]: label } }))} />
@@ -173,7 +173,7 @@ export default function AddGatewayDialog({ open, farm, kumbungs, onClose }) {
               {!device.capabilities.actuators?.length && <p className="text-xs text-muted-foreground">Gateway tidak melaporkan aktuator.</p>}
             </div>
             {error && <p className="text-sm text-red-600">{error}</p>}
-            <DialogFooter>
+            <DialogFooter className="gap-2 sm:gap-0">
               <Button type="button" variant="outline" onClick={() => setDevice(null)} disabled={busy}>Kembali</Button>
               <Button type="submit" disabled={busy || !name.trim()}>
                 {busy ? <Loader2 size={15} className="mr-1.5 animate-spin" /> : <Link2 size={15} className="mr-1.5" />}

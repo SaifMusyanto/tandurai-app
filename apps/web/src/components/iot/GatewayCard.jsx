@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Cpu, Wifi, WifiOff, Unlink, Loader2, RefreshCcw } from 'lucide-react';
+import { Cpu, Wifi, WifiOff, Unlink, Loader2, RefreshCcw, Power, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -11,12 +11,44 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useIot } from '@/contexts/IotContext';
 import InlineName from '@/components/iot/InlineName';
-import { MODE_LABEL, relativeTime, secondsUntilOff } from '@/lib/iot';
+import { MODE_LABEL, RESET_REASON_LABEL, formatUptime, otaSummary, relativeTime, secondsUntilOff } from '@/lib/iot';
 import { PARAMETERS, PARAMETER_KEYS, formatParameter } from '@/lib/parameters';
 import DataTable from '@/components/DataTable';
 
 const STALE_MS = 180000;
 const NO_KUMBUNG = '__none__';
+const WARN_STYLE = 'bg-yellow-500/10 text-yellow-700 border-yellow-500/20';
+const PROBLEM_RESETS = new Set(['brownout', 'panic', 'int_wdt', 'task_wdt', 'wdt']);
+const OTA_STYLE = { ok: 'bg-green-500/10 text-green-600 border-green-500/20', busy: WARN_STYLE, bad: 'bg-red-500/10 text-red-600 border-red-500/20' };
+
+/** Badge diagnostik gateway (firmware ≥ 0.4.0): lama menyala, restart terakhir, update firmware. */
+function GatewayHealth({ gateway, now }) {
+  const diag = gateway.diagnostics;
+  const ota = otaSummary(gateway.ota, now);
+  if (!diag && !ota) return null;
+  const reason = diag?.resetReason;
+  const drops = diag ? `Sejak menyala: Wi-Fi putus ${diag.wifiDrops ?? 0}×, MQTT putus ${diag.mqttDrops ?? 0}×` : '';
+  return (
+    <>
+      {gateway.online && gateway.bootedAt && (
+        <Badge variant="outline" className="text-xs" title={drops}>
+          <Power size={12} className="mr-1" />Menyala {formatUptime((now - Date.parse(gateway.bootedAt)) / 1000)}
+        </Badge>
+      )}
+      {reason && (
+        <Badge variant="outline" className={PROBLEM_RESETS.has(reason) ? WARN_STYLE : 'text-xs'}
+          title={`Restart terdeteksi: ${gateway.restartCount ?? 0}×`}>
+          Restart terakhir: {RESET_REASON_LABEL[reason] || reason}
+        </Badge>
+      )}
+      {ota && (
+        <Badge variant="outline" className={OTA_STYLE[ota.tone]}>
+          <Download size={12} className="mr-1" />{ota.text}
+        </Badge>
+      )}
+    </>
+  );
+}
 
 const SENSOR_STATUS = {
   pending: { label: 'Menunggu data', className: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20' },
@@ -95,6 +127,7 @@ export default function GatewayCard({ gateway, kumbungs, now, canManage = false 
                 <Badge variant="outline" className={gateway.pendingSync ? 'bg-yellow-500/10 text-yellow-700 border-yellow-500/20' : 'text-xs'}>
                   {gateway.pendingSync ? <><RefreshCcw size={12} className="mr-1" />Pending sync v{gateway.configVersion}</> : `Config v${gateway.appliedConfigVersion} diterapkan`}
                 </Badge>
+                <GatewayHealth gateway={gateway} now={now} />
               </div>
             </div>
           </div>

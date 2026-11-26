@@ -8,7 +8,7 @@ Path relatif terhadap `apps/web`. Peran diringkas dari source.
 |---|---|
 | `src/App.jsx` → `App` default | Auth gate, provider global, route dan 404. |
 | `src/pages/AuthPage.jsx` → default | UI autentikasi sebelum dashboard. |
-| `src/pages/HomePage.jsx` → default | Dashboard, telemetry, cuaca dan chat opsional. |
+| `src/pages/HomePage.jsx` → default | Dashboard, telemetry, cuaca dan chat melalui proxy backend. |
 | `src/pages/MonitoringPage.jsx` → default | Monitoring sensor/cuaca. |
 | `src/pages/OperationsExperiencePage.jsx` → default | Operasional kumbung harian (Hari Ini, Batch, Rekap, Atur); route `/operations`. |
 | `src/components/operations/*` | `TodayPanel`, `QuickActions` (+`VoidDialog`), `ActivityDialog`, `HarvestDialog`, `BatchWizard`, `BatchList`, `BatchDialogs` (pindah tahap/tutup), `RecapPanel`, `FarmKumbungSettings`, `controls` (tombol pilihan besar, stepper). |
@@ -19,7 +19,7 @@ Path relatif terhadap `apps/web`. Peran diringkas dari source.
 | `src/components/TelegramStatus.jsx` → default | Ringkasan koneksi Telegram farm (atau peringatan belum terhubung) + tautan ke Pengaturan → Notifikasi. |
 | `src/contexts/IotContext.jsx` → `IotProvider`, `useIot` | Gateway IoT + satu SSE untuk seluruh dashboard; aksi IoT; `subscribe(event)` untuk `alert`/`forecast`/`changed`/`ready`. |
 | `src/lib/iot.js`, `src/lib/iotApi.js` | Reducer event SSE + status command (murni); endpoint IoT backend. |
-| `src/components/iot/*` | `AddGatewayDialog`, `GatewayCard`, `ActuatorControlPanel`, `ActuatorConfigDialog`. |
+| `src/components/iot/*` | `AddGatewayDialog`, `GatewayCard` (status koneksi, uptime/restart, OTA), `ActuatorControlPanel`, `ActuatorConfigDialog`. |
 | `src/lib/access.js` → `farmRoleOf`, `farmRolesOf` | Legacy: role dari data akses RTDB (hanya dipakai test). Role kini dari backend (`/me`, `/operations`). |
 | `src/contexts/FarmContext.jsx` → `FarmProvider`, `useFarmContext` | Profil user, farm/kumbung (backend) dan sensor gateway; `target`, setter, role, `createFarm`. |
 | `src/lib/farmContext.js` → `resolveSelection`, `readStoredSelection`, `writeStoredSelection` | Logika pemilihan konteks dan penyimpanan per user (murni). |
@@ -69,7 +69,7 @@ Path relatif terhadap `apps/web`. Peran diringkas dari source.
 | Path → export | Peran |
 |---|---|
 | `src/firebase.js` → `auth`, `firebaseProjectId` | Firebase Auth saja dan pemeriksaan env wajib. |
-| `src/lib/api.js` → `api`, `apiRequest`, `streamUrl`, `ApiError`, `API_URL` | Klien REST backend (Bearer Firebase ID token) dan URL SSE. |
+| `src/lib/api.js` → `api`, `apiRequest`, `streamUrl`, `ApiError`, `API_URL` | Klien REST backend (Bearer Firebase ID token), termasuk chat, dan URL SSE. |
 | `src/lib/telemetryService.js` → `readTelemetryHistory`, `latestFromSensor` | Histori telemetry kumbung (backend) dan normalisasi data live sensor. |
 | `src/lib/operationsService.js` → fungsi load/CRUD | Farm, kumbung, batch dan panen lewat backend. |
 | `src/lib/forecastService.js` → fungsi load/request | Membaca forecast dan meminta perhitungan lewat backend. |

@@ -25,8 +25,9 @@ Browser → main.jsx → App.jsx [Firebase Auth gate]
   → AuthPage (anonim) | BrowserRouter → DashboardLayout → Page
   → DashboardLayout → IotProvider (gateway + satu SSE + bus event) → FarmProvider (profil, farm, kumbung, sensor) + FarmSwitcher di TopNavbar + ContextBar (kumbung/sensor sesuai halaman)
   → Hook/service → src/lib/api.js (REST, Bearer Firebase ID token) → backend apps/api → PostgreSQL
-  Gateway ESP32 → MQTT broker → backend apps/api (satu MQTT client) → PostgreSQL + SSE ke anggota farm
+  Gateway ESP32 → MQTT broker → backend apps/api (satu MQTT client; telemetry, diagnostik, OTA) → PostgreSQL + SSE ke anggota farm
   AI worker lokal (Python) → API worker backend (WORKER_TOKEN)
+  HomePage chat → POST /chat (Bearer Firebase ID token) → backend apps/api → Groq API
 ```
 
-Flow inti: semua data → `src/lib/api.js` (Bearer Firebase ID token) → backend; realtime lewat satu SSE di `IotContext` (`gateway`, `telemetry`, `actuator`, `config`, `command`, `alert`, `forecast`, `changed`; halaman berlangganan via `subscribe`). Telemetry (`/monitoring`, `/historical`, `/analytics`, Home, navbar, Automation) → `FarmContext.target` → `useLatestTelemetry` (SSE) + `telemetryService.readTelemetryHistory` (sampel 10 menit); anggota (`/farm-members`) → `api.members`; perangkat (`/devices`) → `IotContext`; operasi (`/operations`) → `operationsService`; alert → `useAlerts` (dievaluasi backend); forecast (`/ai-forecast`, Home) → `forecastService`/`useDashboardForecast`; Settings → `/me/settings` + pengaturan alert farm; Home → Open-Meteo + endpoint chat opsional.
+Flow inti: semua data → `src/lib/api.js` (Bearer Firebase ID token) → backend; realtime lewat satu SSE di `IotContext` (`gateway`, `telemetry`, `actuator`, `config`, `command`, `alert`, `forecast`, `changed`; halaman berlangganan via `subscribe`). Telemetry (`/monitoring`, `/historical`, `/analytics`, Home, navbar, Automation) → `FarmContext.target` → `useLatestTelemetry` (SSE) + `telemetryService.readTelemetryHistory` (sampel 10 menit); anggota (`/farm-members`) → `api.members`; perangkat (`/devices`) → `IotContext`; operasi (`/operations`) → `operationsService`; alert → `useAlerts` (dievaluasi backend); forecast (`/ai-forecast`, Home) → `forecastService`/`useDashboardForecast`; Settings → `/me/settings` + pengaturan alert farm; Home → Open-Meteo + `api.chat` ke proxy Groq backend.

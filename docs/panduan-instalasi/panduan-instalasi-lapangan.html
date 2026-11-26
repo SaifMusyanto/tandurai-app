@@ -190,7 +190,7 @@
     <p class="sub">Gateway &amp; Sensor Tandurai — dari survei lokasi sampai serah terima</p>
   </div>
   <div class="meta">
-    <div><b>Firmware</b>esp32-gw/0.3.2</div>
+    <div><b>Firmware</b>esp32-gw/0.4.0</div>
     <div><b>Perangkat</b>Gateway TDR-GW1 (board Aigra)</div>
     <div><b>Versi dokumen</b>1.0 · Oktober 2026</div>
   </div>
@@ -243,7 +243,7 @@
       <ul class="check">
         <li>File setup <code>&lt;hwUid&gt;.json</code> dari menu <b>Registrasi Perangkat</b> (berisi <code>hwUid</code> dan <code>deviceSecret</code>)</li>
         <li>Label perangkat: <b>UID gateway</b> + <b>kode klaim</b> (mis. <code>K7Q2-M9XD</code>) sudah tertempel di kotak</li>
-        <li>Firmware terpasang <b>esp32-gw/0.3.2</b> (terlihat di OLED saat menyala)</li>
+        <li>Firmware terpasang <b>esp32-gw/0.4.0</b> (terlihat di OLED saat menyala)</li>
         <li>Unit sudah diuji nyala di kantor: OLED tampil, relay bunyi klik saat diuji</li>
       </ul>
     </div>
@@ -378,7 +378,7 @@
   <p class="lead">Unit baru (atau yang memorinya dikosongkan) otomatis membuka <b>mode setup</b> saat pertama menyala. Pengisian dilakukan dari HP.</p>
 
   <ol class="steps">
-    <li><b class="t">Nyalakan saklar power.</b>OLED menampilkan <code>Tandurai Gateway · Memulai... · esp32-gw/0.3.2</code>, lalu <code>MODE SETUP</code> dengan nama Wi-Fi setup.</li>
+    <li><b class="t">Nyalakan saklar power.</b>OLED menampilkan <code>Memulai... · esp32-gw/0.4.0 · reset: power_on</code>, lalu <code>MODE SETUP</code> dengan nama Wi-Fi setup.</li>
     <li><b class="t">Di HP, buka Wi-Fi dan sambungkan ke <code>Tandurai-Setup-XXXX</code>.</b>Tanpa password. Bila HP memperingatkan "tidak ada internet", pilih tetap tersambung.</li>
     <li><b class="t">Buka browser ke <code>http://192.168.4.1</code>.</b>Muncul halaman <i>Setup Gateway Tandurai</i>.</li>
     <li><b class="t">Isi formulir sesuai tabel di bawah.</b>Lalu tekan <b>Simpan &amp; restart</b>.</li>
@@ -435,7 +435,7 @@ Humy : 88.5 %RH
 
   <div class="call note">
     <b class="h">Status lampu dan versi firmware</b>
-    LED merah pada board = power (selalu menyala). Versi firmware tampil sebentar di layar pertama saat menyala — pastikan <code>esp32-gw/0.3.2</code>.
+    LED merah pada board = power (selalu menyala). Layar pertama saat menyala menampilkan versi firmware (pastikan <code>esp32-gw/0.4.0</code>) dan penyebab restart terakhir: <code>power_on</code> = listrik dinyalakan (normal), <code>brownout</code> = tegangan drop, <code>task_wdt</code> = alat sempat macet lalu dipulihkan otomatis. Penyebab restart juga tampil di kartu gateway dashboard.
   </div>
 
   <p><b>Lanjut ke Bab 6 hanya bila WiFi dan MQTT keduanya <span class="pill p-ok">terhubung</span></b> dan slide RS485 muncul.</p>
@@ -489,7 +489,7 @@ Humy : 88.5 %RH
   <ol class="steps">
     <li><b class="t">Sambungkan beban asli.</b>Lakukan dengan listrik mati, lalu nyalakan kembali.</li>
     <li><b class="t">Nyala-matikan setiap aktuator 3 kali.</b>Perhatikan OLED selama pengujian.</li>
-    <li><b class="t">Gateway sempat <i>offline</i> / OLED menampilkan <code>Memulai...</code> saat relay berpindah?</b>Itu gangguan listrik dari motor (Bab 3.3). Catat channel mana, pasang peredam, dan laporkan ke tim.</li>
+    <li><b class="t">Gateway sempat <i>offline</i> / OLED menampilkan <code>Memulai...</code> saat relay berpindah?</b>Itu gangguan listrik dari motor (Bab 3.3). Lihat baris <code>reset:</code> di OLED atau badge <i>Restart terakhir</i> di dashboard (<i>brownout</i> = tegangan drop). Catat channel mana, pasang peredam, dan laporkan ke tim.</li>
   </ol>
 
   <h3>7.4 Aturan otomatis (bila diminta pemilik)</h3>
@@ -584,7 +584,7 @@ Humy : 88.5 %RH
   </div>
 
   <p>Di halaman setup, kolom password dan secret yang <b>dikosongkan tidak mengubah</b> nilai tersimpan. Untuk ganti Wi-Fi saja, cukup isi SSID dan password baru lalu simpan.</p>
-  <p>Cara terakhir bila mode setup tetap tidak terbuka: upload ulang firmware lewat USB-C dengan opsi hapus memori (<code>EraseFlash=all</code>); seluruh setting kembali kosong.</p>
+  <p>Cara terakhir bila mode setup tetap tidak terbuka: upload ulang firmware lewat USB-C dengan partisi OTA dan opsi hapus memori (<code>PartitionScheme=min_spiffs,EraseFlash=all</code>); seluruh setting kembali kosong.</p>
 </section>
 
 <!-- ══════════════════════ B ══════════════════════ -->
@@ -594,11 +594,13 @@ Humy : 88.5 %RH
   <h3>Gateway</h3>
   <table class="compact">
     <tr><th style="width:32%">Item</th><th>Nilai</th></tr>
-    <tr><td>Model / firmware</td><td>TDR-GW1 · esp32-gw/0.3.2</td></tr>
+    <tr><td>Model / firmware</td><td>TDR-GW1 · esp32-gw/0.4.0</td></tr>
     <tr><td>Mikrokontroler</td><td>ESP32-WROOM-32D (board USB-C)</td></tr>
-    <tr><td>Koneksi</td><td>Wi-Fi 2,4 GHz · MQTT 3.1.1 over TLS ke <code>mqtt.tandurai.id:8883</code> (CA ISRG Root X1)</td></tr>
+    <tr><td>Koneksi</td><td>Wi-Fi 2,4 GHz · MQTT 3.1.1 over TLS ke <code>mqtt.tandurai.id:8883</code> (CA ISRG Root X1 + X2)</td></tr>
     <tr><td>Kirim data sensor</td><td>Setiap 10 detik · status tiap 60 detik · dianggap offline setelah 180 detik tanpa aktivitas</td></tr>
     <tr><td>Penyimpanan lokal</td><td>Wi-Fi, identitas, jadwal &amp; aturan aktuator (tetap ada saat listrik padam)</td></tr>
+    <tr><td>Update firmware</td><td>Dari server lewat internet (OTA), tanpa membuka kotak · partisi <i>Minimal SPIFFS (1.9MB APP with OTA)</i></td></tr>
+    <tr><td>Pengaman</td><td>Watchdog: alat macet &gt; 60 detik → restart otomatis, semua relay mati</td></tr>
     <tr><td>Kapasitas aturan</td><td>Per aktuator: maks. 12 jadwal atau 8 aturan otomatis</td></tr>
   </table>
 
@@ -610,7 +612,7 @@ Humy : 88.5 %RH
     <tr><td>Relay exhaust</td><td>A3</td><td>GPIO 25</td><td>Aktif HIGH · batas 3600 dtk</td></tr>
     <tr><td>Sensor RS485</td><td>S2</td><td>RX 16 · TX 17</td><td>Modbus RTU · alamat 1 · 4800 baud · modul auto-direction</td></tr>
     <tr><td>OLED SH1106 1,3"</td><td>—</td><td>SDA 21 · SCL 22</td><td>I²C</td></tr>
-    <tr><td>Radio LoRa SX1276</td><td>S1</td><td>NSS 5 · RST 14 · DIO0 26 · DIO1 33</td><td>Nonaktif di 0.3.2 (Lampiran C)</td></tr>
+    <tr><td>Radio LoRa SX1276</td><td>S1</td><td>NSS 5 · RST 14 · DIO0 26 · DIO1 33</td><td>Nonaktif di 0.4.0 (Lampiran C)</td></tr>
     <tr><td>LED status (opsional)</td><td>—</td><td>GPIO 2</td><td>Board tidak punya LED biru; LED eksternal + resistor 220 Ω ke GND bisa dipasang di panel</td></tr>
   </table>
 
@@ -627,7 +629,7 @@ Humy : 88.5 %RH
 <!-- ══════════════════════ C ══════════════════════ -->
 <section class="chapter" id="lc">
   <h2><span class="no">C</span>Sensor LoRa (bila diaktifkan)</h2>
-  <p class="lead">Sensor ZYD-M500CO2 (suhu, kelembapan, <b>CO₂</b>) terhubung tanpa kabel lewat LoRa. Di firmware 0.3.2 fitur ini <b>dimatikan</b> (<code>USE_LORA false</code>); bagian ini berlaku setelah tim software mengaktifkannya.</p>
+  <p class="lead">Sensor ZYD-M500CO2 (suhu, kelembapan, <b>CO₂</b>) terhubung tanpa kabel lewat LoRa. Di firmware 0.4.0 fitur ini <b>dimatikan</b> (<code>USE_LORA false</code>); bagian ini berlaku setelah tim software mengaktifkannya.</p>
 
   <h3>Setelan yang harus sama antara sensor dan gateway</h3>
   <table>

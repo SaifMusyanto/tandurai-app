@@ -1,6 +1,7 @@
 import express from 'express';
 import { pathToFileURL } from 'node:url';
 import { createAlertService, telegramNotifier } from './alerts.js';
+import { createChatService } from './chat.js';
 import { createAuthenticator } from './auth.js';
 import { loadEnvFile, readConfig } from './config.js';
 import { createPool } from './db.js';
@@ -60,6 +61,13 @@ export async function createBackend(config, { log = console, authenticate, notif
     if (req.method === 'OPTIONS') return res.status(204).end();
     return next();
   });
+  // Firmware gateway untuk OTA. Publik (tanpa rahasia di dalamnya); gateway memvalidasi isi dengan
+  // SHA-256 yang dikirim lewat MQTT. Hanya nama file *.bin; selain itu 404.
+  const notFound = (req, res) => res.status(404).json({ error: 'not_found' });
+  app.use('/api/firmware',
+    (req, res, next) => (/^\/[A-Za-z0-9._-]+\.bin$/.test(req.path) ? next() : notFound(req, res)),
+    express.static(config.firmwareDir, { index: false, dotfiles: 'deny', etag: true, maxAge: 0 }),
+    notFound);
   app.use('/api/worker', express.json({ limit: '2mb' })); // forecast & fitur dari AI worker
   app.use(express.json({ limit: '64kb' }));
   app.use('/api', createRouter({
@@ -75,6 +83,7 @@ export async function createBackend(config, { log = console, authenticate, notif
     authenticate: authenticate || createAuthenticator(config),
     health,
     admin: createAdminService({ pool, health, config }),
+    chat: createChatService({ config, log }),
   }));
   app.use(errorHandler(log));
 

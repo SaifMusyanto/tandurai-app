@@ -4,7 +4,7 @@ import { canPublish, canSubscribe } from '../src/brokerAcl.js';
 import {
   formatClaimCode, generateClaimCode, hashSecret, normalizeClaimCode, verifySecret,
 } from '../src/secrets.js';
-import { cleanReadings, deviceTime, parseCapabilities, validateActuatorConfig } from '../src/validate.js';
+import { cleanDiagnostics, cleanReadings, deviceTime, parseCapabilities, validateActuatorConfig } from '../src/validate.js';
 
 test('hash rahasia: verifikasi benar/salah, kode klaim dinormalisasi', () => {
   const stored = hashSecret('rahasia-perangkat');
@@ -182,4 +182,17 @@ test('xlsx & csv export: file zip valid dan CSV aman untuk Excel', async () => {
   assert.match(entries['xl/worksheets/sheet1.xml'], /<c r="B2"><v>26.5<\/v><\/c>/);
   assert.match(entries['xl/worksheets/sheet1.xml'], /Suhu &lt;A&gt;/);
   assert.equal(buildCsv([['a', 1.5], ['=SUM(A1)', 'x;y']]), '\uFEFFa;1,5\r\n\'=SUM(A1);"x;y"\r\n');
+});
+
+test('diagnostik status: field dikenal saja, firmware lama → null', () => {
+  assert.equal(cleanDiagnostics({ online: true, firmware: 'esp32-gw/0.3.2' }), null);
+  assert.deepEqual(cleanDiagnostics({ uptimeSec: 3600 }), { uptimeSec: 3600 });
+  assert.deepEqual(
+    cleanDiagnostics({
+      uptimeSec: 42,
+      diag: { resetReason: 'brownout', wifiDrops: 3, mqttDrops: 1, wifiReason: 201, freeHeap: 150000, minFreeHeap: 90000, evil: 'x' },
+    }),
+    { uptimeSec: 42, resetReason: 'brownout', wifiDrops: 3, mqttDrops: 1, wifiReason: 201, freeHeap: 150000, minFreeHeap: 90000 },
+  );
+  assert.deepEqual(cleanDiagnostics({ uptimeSec: -1, diag: { resetReason: 'rm -rf', wifiDrops: 1.5 } }), null);
 });

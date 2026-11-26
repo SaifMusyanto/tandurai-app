@@ -16,7 +16,7 @@
 - Semua data lewat `src/lib/api.js`; dashboard bergantung pada backend `apps/api` (dan broker MQTT untuk IoT). Bila backend mati, halaman menampilkan error/empty state; login tetap lewat Firebase Auth.
 - `SettingsPage` memiliki context bahasa/form lokal, bukan provider global.
 - Fetch cuaca/geocoding/Telegram berjalan dari browser; integrasi Telegram perlu ditinjau bersama pengelolaan token yang diinput UI.
-- Chat hanya tersedia bila `VITE_CHAT_API_URL` disetel; implementasi server proxy tidak ditemukan di app.
+- Chat bergantung pada proxy backend `POST /chat`, konfigurasi `GROQ_API_KEY`, dan kuota/ketersediaan Groq API.
 - `exportToExcel` dan `exportToPDF` merupakan fallback (CSV dan `window.print`), bukan ekspor format asli.
 - `vite.config.js` menyisipkan penanganan error/fetch yang mengirim `postMessage` ke `window.parent`; plugin dev juga menambah jalur editor/preview.
 - Aturan deploy, rewrite SPA, pipeline secret, dan backend worker forecast: Not found dari source app.

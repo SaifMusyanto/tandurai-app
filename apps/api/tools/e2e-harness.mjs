@@ -6,7 +6,7 @@ import { startDevBroker } from './broker.mjs';
 
 export const TEST_DB = process.env.TEST_DATABASE_URL || 'postgres://postgres@localhost:5433/tandurai_iot_test';
 export const WORKER_TOKEN = 'e2e-worker-token-0123456789';
-const BACKEND_PASS = 'e2e-backend-pass';
+export const BACKEND_PASS = 'e2e-backend-pass';
 const quiet = { info() {}, warn() {}, error: (...args) => console.error(...args) };
 
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));

@@ -26,6 +26,8 @@ x-api-env: &api-env
   CORS_ORIGINS: https://${DASHBOARD_DOMAIN}
   ADMIN_EMAILS: ${ADMIN_EMAILS:-}
   WORKER_TOKEN: ${WORKER_TOKEN:?isi WORKER_TOKEN di deploy/.env}
+  GROQ_API_KEY: ${GROQ_API_KEY:-}
+  GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
   HISTORY_RETENTION_DAYS: ${HISTORY_RETENTION_DAYS:-180}
   OFFLINE_AFTER_SEC: ${OFFLINE_AFTER_SEC:-180}
   TZ: Asia/Jakarta
@@ -80,6 +82,10 @@ services:
     user: node
     restart: unless-stopped
     environment: *api-env
+    volumes:
+      # File firmware gateway (.bin) untuk OTA: salin ke deploy/firmware/ di VM, lalu
+      # docker compose exec api node apps/api/tools/ota.mjs --file <nama>.bin --hw-uid TDR-…
+      - ./firmware:/app/apps/api/firmware:ro
     networks:
       default:
         # Nama unik untuk Caddy: container web juga bisa ikut network bersama yang mungkin punya service "api" lain.

@@ -237,6 +237,36 @@ cd /home/service/tandurai && sudo bash deploy/deploy.sh
 
 Migration database berjalan otomatis saat `api` start. Model AI baru cukup di-sync ke `ai_model/` (lihat `ai_model/README.md`), commit, lalu jalankan perintah yang sama.
 
+### Update firmware gateway (OTA)
+
+Gateway dengan firmware ≥ 0.4.0 yang di-flash memakai partisi **Minimal SPIFFS (1.9MB APP with OTA)** bisa di-update dari server tanpa membuka casing. Unit lama (partisi *Huge APP*) perlu satu kali upload lewat USB dengan partisi baru; setting Wi-Fi/hwUid tidak hilang karena lokasi NVS sama.
+
+1. **Laptop:** compile, ambil file aplikasinya (`*.ino.bin`, **bukan** `*.merged.bin`):
+   ```powershell
+   arduino-cli compile --fqbn "esp32:esp32:esp32:PartitionScheme=min_spiffs" --output-dir out firmware/aigra/tandurai_gateway
+   scp out/tandurai_gateway.ino.bin <user>@<VM>:/tmp/tandurai-gw-aigra-0.4.1.bin
+   ```
+   Naikkan `FIRMWARE_VERSION` di sketch setiap rilis; gateway menolak versi yang sama dengan yang sedang berjalan.
+2. **VM:** letakkan di `deploy/firmware/` lalu kirim:
+   ```bash
+   sudo mv /tmp/tandurai-gw-aigra-0.4.1.bin /home/service/tandurai/deploy/firmware/
+   cd /home/service/tandurai/deploy
+   sudo docker compose exec api node apps/api/tools/ota.mjs --file tandurai-gw-aigra-0.4.1.bin --hw-uid TDR-XXXXXXXXXXXX --dry-run
+   sudo docker compose exec api node apps/api/tools/ota.mjs --file tandurai-gw-aigra-0.4.1.bin --hw-uid TDR-XXXXXXXXXXXX
+   ```
+   `--all` mengirim ke semua gateway online dengan versi berbeda. Uji dulu ke satu unit.
+3. Tool memantau hasil: `started` → (±1 menit) `done` saat gateway melapor versi baru. Status juga tampil di kartu gateway dashboard (badge *Update …*).
+
+| Hasil | Arti |
+|---|---|
+| `rejected: no_ota_partition` | Unit masih partisi Huge APP → upload sekali lewat USB dengan `PartitionScheme=min_spiffs` |
+| `rejected: same_version` | `FIRMWARE_VERSION` belum dinaikkan |
+| `failed: connect` / `http_404` | Gateway tidak bisa mengunduh URL: cek `--base-url`, proxy host dashboard, file ada di `deploy/firmware/` |
+| `failed: sha256_mismatch` | File berubah di perjalanan (cache/proxy). Gateway tetap di versi lama |
+| `rolled_back` | Firmware baru tidak bisa konek ke server, bootloader kembali ke versi lama |
+
+Selama download (±30–60 dtk) semua relay dimatikan dan gateway offline; jadwal/aturan berjalan lagi setelah restart.
+
 ---
 
 ## 8. Perintah server

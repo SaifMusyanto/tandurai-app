@@ -155,7 +155,10 @@ export default function AuthPage() {
   const handleGoogle = async () => {
     setError(''); setSuccess(''); setLoading(true);
     try {
-      await signInWithPopup(auth, new GoogleAuthProvider());
+      // Selalu tampilkan pemilih akun; tanpa ini Google langsung memakai sesi akun terakhir setelah logout.
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      await signInWithPopup(auth, provider);
     } catch (err) {
       if (err.code === 'auth/operation-not-allowed') setError('Login Google belum diaktifkan di Firebase Console (Authentication → Sign-in method).');
       else if (err.code === 'auth/popup-blocked') setError('Popup diblokir browser. Izinkan popup untuk situs ini lalu coba lagi.');

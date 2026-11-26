@@ -23,7 +23,7 @@ function createClaimLimiter({ max = 10, windowMs = 10 * 60 * 1000 } = {}) {
   };
 }
 
-export function createRouter({ iot, domain, activities, reports, admin, alerts, forecast, devices, hub, authenticate, health, workerToken }) {
+export function createRouter({ iot, domain, activities, reports, admin, alerts, forecast, devices, chat, hub, authenticate, health, workerToken }) {
   const router = express.Router();
   const auth = requireUser(authenticate, { onUser: domain.ensureUser });
   const limiter = createClaimLimiter();
@@ -48,6 +48,9 @@ export function createRouter({ iot, domain, activities, reports, admin, alerts, 
   router.patch('/me', auth, json(req => domain.updateMe(req.user, req.body)));
   router.get('/me/settings', auth, json(req => domain.getSettings(req.user)));
   router.put('/me/settings', auth, json(req => domain.putSettings(req.user, req.body)));
+
+  // ── chatbot (proxy Groq)
+  router.post('/chat', auth, json(req => chat.ask(req.user, req.body)));
 
   // ── farm, anggota, audit
   router.get('/farms', auth, json(req => domain.listFarms(req.user)));

@@ -67,10 +67,13 @@ Semua JSON UTF-8. Waktu dalam **milidetik epoch** dari jam SNTP.
 ### 3.2 `status` (retained)
 
 ```json
-{ "online": true, "firmware": "esp32-gw/1.0.0", "configVersion": 7, "uptimeSec": 3600 }
+{ "online": true, "firmware": "esp32-gw/0.4.0", "configVersion": 7, "uptimeSec": 3600,
+  "diag": { "resetReason": "brownout", "wifiDrops": 2, "mqttDrops": 3, "wifiReason": 201, "freeHeap": 151204, "minFreeHeap": 98320 } }
 ```
 
 `configVersion` = versi config terakhir yang tersimpan di NVS. Bila lebih kecil dari versi backend, backend mengirim ulang config. Backend menganggap offline bila menerima LWT `{"online":false}` atau tidak ada aktivitas valid > 180 dtk.
+
+`diag` (opsional, firmware ≥ 0.4.0) untuk diagnosis di dashboard: `resetReason` = penyebab restart terakhir (`power_on` | `external` | `software` | `panic` | `int_wdt` | `task_wdt` | `wdt` | `brownout` | `deepsleep` | `unknown`); `wifiDrops`/`mqttDrops` = jumlah putus sejak boot; `wifiReason` = kode alasan putus Wi-Fi terakhir (esp_wifi, mis. 201 AP tidak ditemukan); `freeHeap`/`minFreeHeap` = RAM bebas sekarang/terendah (byte). Backend mendeteksi restart dari `uptimeSec` yang mundur.
 
 ### 3.3 `telemetry`
 
@@ -106,6 +109,14 @@ Sensor yang gagal dibaca **dihilangkan** dari `readings` (jangan kirim 0). Nilai
 
 `status`: `applied` | `rejected` (+ `reason`). `items` per aktuator (`ok` | `fault`) dan per sensor (`ok` | `not_found` | `read_error`). Dashboard menampilkan **Pending Sync** sampai ACK berisi versi tersebut.
 
+### 3.7 `ack` untuk update firmware (OTA)
+
+```json
+{ "type": "ota", "id": "c1d2…-uuid", "status": "started", "reason": null, "version": "esp32-gw/0.4.1" }
+```
+
+`status`: `started` (lolos pemeriksaan, download dimulai) | `rejected` (+ `reason`: `no_ota_partition`, `size`, `sha256`, `same_version`, `url`, `busy`) | `failed` (dikirim setelah reconnect; `reason`: `connect`, `http_<kode>`, `length`, `begin`, `write`, `incomplete`, `sha256_mismatch`, `end`). Sukses tidak di-ACK: gateway restart lalu `status.firmware` = versi baru. Bila firmware baru restart sebelum terhubung ke MQTT, bootloader kembali ke versi lama (*rollback*) dan backend mencatat `rolled_back`.
+
 ## 4. Payload backend → ESP32
 
 ### 4.1 `cmd`
@@ -129,6 +140,15 @@ Sensor yang gagal dibaca **dihilangkan** dari `readings` (jangan kirim 0). Nilai
 9. Simpan `id` ke NVS → publish `ack` lalu `state`.
 
 Target: ACK < 2 dtk setelah command diterima. Jangan memakai `delay()` di jalur relay.
+
+**Update firmware (OTA)** memakai topic `cmd` yang sama, tanpa `actuator`:
+
+```json
+{ "id": "c1d2…-uuid", "action": "ota", "url": "https://dashboard.tandurai.id/api/firmware/tandurai-gw-0.4.1.bin",
+  "sha256": "9f2c…64 hex", "size": 1186432, "version": "esp32-gw/0.4.1", "expiresAt": 1791508200000 }
+```
+
+Butir 1–3 di atas tetap berlaku (kedaluwarsa 10 menit). Gateway memeriksa partisi OTA, ukuran, dan versi, mengirim ACK `ota` (§3.7), mematikan semua relay, memutus MQTT, mengunduh lewat HTTPS (CA yang sama dengan broker), menulis ke partisi OTA cadangan sambil menghitung SHA-256, lalu restart **hanya bila hash cocok**. URL boleh publik karena hash datang lewat MQTT yang terautentikasi. Dikirim admin dengan `apps/api/tools/ota.mjs`.
 
 ### 4.2 `config` (retained)
 
@@ -172,7 +192,7 @@ Penanganan:
 
 | Prioritas | Aturan |
 |---|---|
-| 1. Proteksi | Relay OFF saat boot/watchdog reset; ON tidak pernah melebihi `maxRunSec`; `estop` selalu berlaku. |
+| 1. Proteksi | Relay OFF saat boot/watchdog reset; ON tidak pernah melebihi `maxRunSec`; `estop` selalu berlaku. Watchdog: loop macet > 60 dtk → restart (koneksi jaringan dibatasi 10 dtk connect + 10 dtk handshake TLS agar tidak memicunya). |
 | 2. Override manual | `cmd` `on` saat `timer`/`auto` menahan engine aktuator itu sampai relay mati (lihat §4.1 butir 6). |
 | 3. Mode aktif | `manual`: hanya `cmd` (dan tombol fisik). `timer`: tiap jadwal — `at`: ON `onSec` sekali pada menit `at` di hari `days`; `every`: ON `onSec` tiap `intervalSec` di dalam `window` (opsional) pada hari `days`; bila relay sudah ON, pemicu dilewati. `auto`: saat relay OFF dan jeda lewat, aturan pertama yang kondisinya terpenuhi (`operator` `below`/`above` `threshold`) menyalakan relay (`trigger.rule`). OFF ketika `stop.type: "duration"` habis (`onSec`) atau `stop.type: "value"` tercapai (`below` → nilai ≥ `stop.value`; `above` → nilai ≤ `stop.value`). ON otomatis tetap dibatasi `maxRunSec`. Setelah mati, aturan menunggu `cooldownSec`; setelah OFF manual, tunggu `cooldownSec` terbesar. |
 | 4. Sensor acuan `auto` tidak terbaca > 180 dtk | Relay OFF, `source: "protection"`. |
@@ -197,3 +217,5 @@ Engine jadwal/otomatis berjalan dari config NVS **walau MQTT/Wi-Fi terputus**.
 - [ ] Config baru → tersimpan di NVS, ACK < 5 dtk; setelah restart tanpa internet tetap memakai config tersebut.
 - [ ] Jadwal (`at` & `every`, per hari) dan aturan otomatis (mati setelah durasi / saat kembali normal) berjalan tanpa internet dan `state` melaporkan `trigger`; command manual menjadi override sementara lalu engine melanjutkan; `estop` selalu berhasil.
 - [ ] Relay OFF setelah power cycle dan watchdog reset.
+- [ ] `status.diag.resetReason` benar setelah cabut daya (`power_on`) dan setelah watchdog (`task_wdt`).
+- [ ] OTA: file dengan hash salah ditolak (`failed`/`sha256_mismatch`) dan gateway tetap di versi lama; OTA valid → restart ke versi baru; firmware baru yang tidak bisa konek MQTT kembali ke versi lama setelah restart.

@@ -14,13 +14,16 @@
  * Yang disesuaikan tim hardware sekali saja: bagian HARDWARE (pin) dan readSensor().
  *
  * Broker produksi: mqtts://mqtt.tandurai.id:8883 (TLS wajib, sudah jadi nilai bawaan halaman setup).
- * Sertifikat server diverifikasi dengan CA ISRG Root X1 yang ditanam di bawah (berlaku s.d. 2035).
+ * Sertifikat server diverifikasi dengan CA ISRG Root X1 + X2 yang ditanam di bawah (berlaku s.d. 2035/2040).
+ * Update firmware lewat internet (OTA) dengan perintah "ota" di topic cmd (ota.h); butuh partisi dengan
+ * OTA: Tools → Partition Scheme → "Minimal SPIFFS (1.9MB APP with OTA)" (PartitionScheme=min_spiffs).
+ * Watchdog, alasan restart, dan penghitung putus koneksi ada di diag.h.
  * TLS tanpa verifikasi (setInsecure) hanya aktif bila TANDURAI_ALLOW_INSECURE_TLS di-#define untuk uji.
  *
  * ── Versi board Aigra ──
  * Software = firmware referensi Tandurai di atas; pin & driver = sensor_oled/sensor_oled.ino (Aigra).
  *   S1 = ZYD-M500CO2 lewat LoRaWAN ABP single-channel (SX1276)   → lora_sensor.h
- *   S2 = RS-O2WS-N01 lewat RS485 Modbus                          → rs485_sensor.h
+ *   S2 = sensor CO₂/suhu/kelembapan lewat RS485 Modbus           → rs485_sensor.h
  *   OLED SH1106 + tombol BOOT ganti slide                         → oled_ui.h
  *   Semua pin                                                     → hardware.h
  * Kunci LoRaWAN sensor (DevAddr/NwkSKey/AppSKey) diisi per unit di halaman setup, tidak di kode.
@@ -42,13 +45,15 @@
 #include "lora_sensor.h"
 #include "rs485_sensor.h"
 #include "oled_ui.h"
+#include "diag.h"
+#include "ota.h"
 
 // Arduino menyisipkan prototipe fungsi otomatis sebelum fungsi pertama (readSensor), yaitu sebelum
 // struct di bawah didefinisikan; deklarasi awal ini membuat prototipe tersebut valid.
 struct Schedule;
 struct LocalClock;
 
-#define FIRMWARE_VERSION "esp32-gw/0.3.2"
+#define FIRMWARE_VERSION "esp32-gw/0.4.1"
 #define TANDURAI_MODEL "TDR-GW1"
 
 // ─────────────────────────── BROKER PRODUKSI ───────────────────────────
@@ -58,7 +63,8 @@ const int DEFAULT_MQTT_PORT = 8883;
 const bool DEFAULT_MQTT_TLS = true;
 
 #ifndef TANDURAI_CA_CERT
-// ISRG Root X1 (Let's Encrypt), SHA-256 96:BC:EC:06:26:49:76:F3:74:60:77:9A:CF:28:C5:A7:CF:E8:A3:C0:AA:E1:1A:8F:FC:EE:05:C0:BD:DF:08:C6
+// ISRG Root X1 (Let's Encrypt, rantai sertifikat RSA), SHA-256 96:BC:EC:06:26:49:76:F3:74:60:77:9A:CF:28:C5:A7:CF:E8:A3:C0:AA:E1:1A:8F:FC:EE:05:C0:BD:DF:08:C6
+// ISRG Root X2 (Let's Encrypt, rantai ECDSA mis. sertifikat Nginx Proxy Manager), SHA-256 69:72:9B:8E:15:A8:6E:FC:17:7A:57:AF:B7:17:1D:FC:64:AD:D2:8C:2F:CA:8C:F1:50:7E:34:45:3C:CB:14:70
 #define TANDURAI_CA_CERT ISRG_ROOT_X1
 static const char ISRG_ROOT_X1[] = R"PEM(-----BEGIN CERTIFICATE-----
 MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
@@ -91,6 +97,20 @@ oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq
 mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
 emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 -----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIICGzCCAaGgAwIBAgIQQdKd0XLq7qeAwSxs6S+HUjAKBggqhkjOPQQDAzBPMQsw
+CQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJuZXQgU2VjdXJpdHkgUmVzZWFyY2gg
+R3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBYMjAeFw0yMDA5MDQwMDAwMDBaFw00
+MDA5MTcxNjAwMDBaME8xCzAJBgNVBAYTAlVTMSkwJwYDVQQKEyBJbnRlcm5ldCBT
+ZWN1cml0eSBSZXNlYXJjaCBHcm91cDEVMBMGA1UEAxMMSVNSRyBSb290IFgyMHYw
+EAYHKoZIzj0CAQYFK4EEACIDYgAEzZvVn4CDCuwJSvMWSj5cz3es3mcFDR0HttwW
++1qLFNvicWDEukWVEYmO6gbf9yoWHKS5xcUy4APgHoIYOIvXRdgKam7mAHf7AlF9
+ItgKbppbd9/w+kHsOdx1ymgHDB/qo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0T
+AQH/BAUwAwEB/zAdBgNVHQ4EFgQUfEKWrt5LSDv6kviejM9ti6lyN5UwCgYIKoZI
+zj0EAwMDaAAwZQIwe3lORlCEwkSHRhtFcP9Ymd70/aTSVaYgLXTWNLxBo1BfASdW
+tL4ndQavEi51mI38AjEAi/V3bNTIZargCyzuFJ0nN6T5U6VR5CmD1/iQMVtCnwr1
+/q4AaOeMSQ+2b1tbFfLn
+-----END CERTIFICATE-----
 )PEM";
 #endif
 
@@ -98,7 +118,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 // Pin mengikuti board Aigra (hardware.h).
 struct SensorDef { const char *id; const char *type; };
 // S1 = ZYD-M500CO2 (LoRaWAN): suhu, kelembapan, CO₂. Tekanan & baterai hanya tampil di OLED.
-// S2 = RS-O2WS-N01 (RS485): suhu, kelembapan; tidak punya CO₂ (tidak dikirim). O₂ hanya tampil di OLED.
+// S2 = sensor CO₂ RS485 (pengganti RS-O2WS-N01): suhu, kelembapan, CO₂.
 // type memakai nilai referensi "scd41" sampai kontrak (§3.1) punya nilai untuk sensor ini.
 // ID tetap S1/S2 walau LoRa dimatikan, supaya histori S2 di dashboard tidak berubah saat S1 diaktifkan lagi.
 #if USE_LORA
@@ -251,6 +271,7 @@ void publishRegister() {
 void publishStatus() {
   JsonDocument doc;
   doc["online"] = true; doc["firmware"] = FIRMWARE_VERSION; doc["configVersion"] = configVersion; doc["uptimeSec"] = millis() / 1000;
+  diag::fill(doc["diag"].to<JsonObject>());
   publishJson("status", doc, true, 1);
 }
 
@@ -430,6 +451,7 @@ void handleCommand(const String &payload) {
   if (!clockSynced()) return ackCommand(id, -1, "rejected", "no_clock");
   uint64_t expiresAt = doc["expiresAt"] | 0ULL;
   if (!expiresAt || epochMs() > expiresAt) return ackCommand(id, -1, "expired", "expired");
+  if (!strcmp(doc["action"] | "", "ota")) return handleOtaCommand(id, doc);
   int i = actuatorIndex(doc["actuator"] | "");
   if (i < 0) return ackCommand(id, -1, "rejected", "unknown_actuator");
   String action = doc["action"] | "";
@@ -445,6 +467,46 @@ void handleCommand(const String &payload) {
     return ackCommand(id, i, "success", nullptr);
   }
   ackCommand(id, i, "rejected", "invalid_action");
+}
+
+// ─────────────────────────── UPDATE FIRMWARE (OTA) ───────────────────────────
+ota::Job otaJob;
+bool otaPending = false;
+String otaFailId, otaFailReason;                                 // dilaporkan setelah MQTT tersambung lagi
+
+void publishOtaAck(const String &id, const char *status, const char *reason, const String &version) {
+  JsonDocument ack;
+  ack["type"] = "ota"; ack["id"] = id; ack["status"] = status; ack["version"] = version;
+  if (reason) ack["reason"] = reason; else ack["reason"] = nullptr;
+  publishJson("ack", ack, false, 1);
+}
+
+void handleOtaCommand(const String &id, JsonDocument &doc) {
+  ota::Job job;
+  job.id = id; job.url = doc["url"] | ""; job.sha256 = doc["sha256"] | ""; job.version = doc["version"] | ""; job.size = doc["size"] | 0;
+  const char *reason = otaPending ? "busy" : ota::check(job, FIRMWARE_VERSION, !creds.tls);
+  rememberExecuted(id);
+  publishOtaAck(id, reason ? "rejected" : "started", reason, job.version);
+  if (reason) return;
+  otaJob = job; otaPending = true;                              // dijalankan di loop() setelah ACK terkirim
+}
+
+void otaProgress(int percent) { char line[8]; snprintf(line, sizeof line, "%d%%", percent); ui::message("UPDATE FIRMWARE", otaJob.version.c_str(), line); }
+
+void runOta() {
+  otaPending = false;
+  for (int i = 0; i < ACTUATOR_COUNT; i++) if (relays[i].on) setRelay(i, false, "ota");   // timer relay berhenti selama download
+  publishState();
+  mqtt.disconnect();                                            // bebaskan memori & koneksi TLS untuk download
+  Serial.printf("[ota] download %s\n", otaJob.url.c_str());
+  String error = ota::download(otaJob, secureNet, plainNet, otaProgress);
+  if (!error.length()) {
+    ui::message("UPDATE FIRMWARE", otaJob.version.c_str(), "selesai, restart");
+    delay(500);
+    ESP.restart();
+  }
+  Serial.printf("[ota] gagal: %s\n", error.c_str());
+  otaFailId = otaJob.id; otaFailReason = error;
 }
 
 // ─────────────────────────── ENGINE LOKAL (jalan walau offline) ───────────────────────────
@@ -549,6 +611,7 @@ void connectMqtt() {
     publishState();
     sampleAndPublishTelemetry();
     lastHeartbeat = lastTelemetry = millis();
+    if (otaFailId.length()) { publishOtaAck(otaFailId, "failed", otaFailReason.c_str(), otaJob.version); otaFailId = ""; }
   } else {
     // err negatif = gagal jaringan/TLS (host, port 8883, firewall, CA); rc 4/5 = hwUid/secret ditolak broker.
     Serial.printf("[mqtt] gagal tersambung ke %s:%d (err %d, rc %d)\n", creds.mqttHost.c_str(), creds.mqttPort, mqtt.lastError(), mqtt.returnCode());
@@ -675,13 +738,14 @@ void setup() {
   pinMode(PIN_STATUS_LED, OUTPUT); writeStatusLed(false);
   Serial.begin(115200);
   ui::begin();
-  ui::message("Tandurai Gateway", "Memulai...", FIRMWARE_VERSION);
+  ui::message("Memulai...", FIRMWARE_VERSION, (String("reset: ") + diag::resetReason()).c_str());
   bool setupRequested = powerCycleSetupRequested();             // dihitung setiap boot, walau kredensial belum ada
   if (!loadCredentials() || setupRequested) runSetupPortal();   // belum diisi / saklar OFF-ON 3× cepat
   nvs.begin("tandurai", false);
   loadExecuted();
   loadConfigFromNvs();                                          // jadwal/aturan tetap jalan tanpa internet
   logNvsUsage();
+  diag::begin();                                                // watchdog aktif mulai di sini
 
   rs485::begin();
   lora::begin(creds.loraDevAddr, creds.loraNwkSKey, creds.loraAppSKey);
@@ -689,16 +753,15 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(creds.wifiSsid.c_str(), creds.wifiPassword.c_str());
   configTime(0, 0, "pool.ntp.org", "time.google.com");
-  if (creds.tls) {
 #ifdef TANDURAI_ALLOW_INSECURE_TLS
-    secureNet.setInsecure();                                    // HANYA untuk uji: sertifikat server tidak diverifikasi
+  secureNet.setInsecure();                                      // HANYA untuk uji: sertifikat server tidak diverifikasi
 #else
-    secureNet.setCACert(TANDURAI_CA_CERT);                      // verifikasi rantai + nama host mqtt.tandurai.id
+  secureNet.setCACert(TANDURAI_CA_CERT);                        // verifikasi rantai + nama host (MQTT & download OTA)
 #endif
-    mqtt.begin(creds.mqttHost.c_str(), creds.mqttPort, secureNet);
-  } else {
-    mqtt.begin(creds.mqttHost.c_str(), creds.mqttPort, plainNet);
-  }
+  // Batas waktu blok (bawaan core: connect 30 dtk, handshake TLS 120 dtk) agar di bawah watchdog.
+  secureNet.setConnectionTimeout(10000); secureNet.setHandshakeTimeout(10);
+  plainNet.setConnectionTimeout(10000);
+  mqtt.begin(creds.mqttHost.c_str(), creds.mqttPort, creds.tls ? (Client &)secureNet : (Client &)plainNet);
   mqtt.setCleanSession(false);
   mqtt.setKeepAlive(20);
   mqtt.onMessage(onMessage);
@@ -727,11 +790,14 @@ void maintainWifi() {
 void loop() {
   static bool quickBootPending = true;
   if (quickBootPending && millis() >= QUICK_BOOT_MS) { quickBootPending = false; setQuickBoots(0); }   // nyala ≥ 5 dtk = boot normal
+  diag::feed();
   maintainWifi();
   updateStatusLed();
   mqtt.loop();
   if (!mqtt.connected()) connectMqtt();
+  diag::track(WiFi.status() == WL_CONNECTED, mqtt.connected(), mqtt.lastError());
   processQueue();
+  if (otaPending) runOta();
   lora::poll();
   rs485::poll();
   uint32_t now = millis();

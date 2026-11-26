@@ -48,3 +48,8 @@ rtdb-export*.json
 # Kredensial perangkat dari tool pabrik & firmware
 provisioning/
 firmware/**/secrets.h
+
+# Biner firmware untuk OTA (hasil compile, diunggah ke server, bukan sumber)
+deploy/firmware/*.bin
+firmware/**/build/
+apps/api/firmware/

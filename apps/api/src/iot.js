@@ -6,7 +6,7 @@ import { telemetryRow } from './forecast.js';
 import { topicFor } from './mqtt.js';
 import { normalizeClaimCode, verifySecret, HW_UID_PATTERN } from './secrets.js';
 import {
-  HttpError, LOCAL_ID, cleanReadings, deviceTime, parseCapabilities, validateActuatorConfig,
+  HttpError, LOCAL_ID, cleanDiagnostics, cleanReadings, deviceTime, parseCapabilities, validateActuatorConfig,
 } from './validate.js';
 
 const iso = value => (value ? new Date(value).toISOString() : null);
@@ -67,9 +67,16 @@ export function createIotService(ctx) {
       online: row.online, lastSeenAt: iso(row.last_seen_at), claimedAt: iso(row.claimed_at),
       configVersion: row.config_version, appliedConfigVersion: row.applied_config_version,
       pendingSync: row.applied_config_version < row.config_version,
+      diagnostics: row.diagnostics || null, bootedAt: iso(row.booted_at), restartCount: row.restart_count ?? 0,
+      ota: otaView(row.ota),
       sensors: sensors.map(sensorView), actuators: actuators.map(actuatorView),
     };
   }
+
+  const otaView = ota => (ota ? {
+    version: ota.version, fromVersion: ota.fromVersion ?? null, status: ota.status, reason: ota.reason ?? null,
+    sentAt: ota.sentAt ?? null, updatedAt: ota.updatedAt ?? null,
+  } : null);
 
   const commandView = row => ({
     id: row.id, gatewayId: row.gateway_id, actuatorId: row.actuator_id, action: row.action,
@@ -234,11 +241,31 @@ export function createIotService(ctx) {
     const before = (await pool.query('SELECT online, claimed_by, farm_id, config_version, config FROM gateways WHERE id = $1', [hwUid])).rows[0];
     if (!before) return;
     const firmware = typeof payload?.firmware === 'string' ? payload.firmware.slice(0, 64) : null;
-    await pool.query(
-      'UPDATE gateways SET online = true, last_seen_at = now(), firmware = COALESCE($2, firmware) WHERE id = $1',
-      [hwUid, firmware],
+    const diagnostics = cleanDiagnostics(payload);
+    const bootedAt = diagnostics?.uptimeSec !== undefined ? new Date(Date.now() - diagnostics.uptimeSec * 1000) : null;
+    // Waktu boot yang maju > 2 menit dari catatan sebelumnya = gateway restart (toleransi jitter jaringan).
+    const { rows: [updated] } = await pool.query(
+      `UPDATE gateways SET online = true, last_seen_at = now(), firmware = COALESCE($2, firmware),
+         diagnostics = COALESCE($3, diagnostics),
+         restart_count = restart_count + CASE WHEN $4::timestamptz > booted_at + interval '2 minutes' THEN 1 ELSE 0 END,
+         booted_at = COALESCE($4, booted_at)
+       WHERE id = $1 RETURNING *`,
+      [hwUid, firmware, diagnostics, bootedAt],
     );
     if (!before.online) await markOnline(hwUid, before.farm_id);
+    if (diagnostics) {
+      hub.emitGateway(hwUid, 'gateway', {
+        firmware: updated.firmware, diagnostics: updated.diagnostics, bootedAt: iso(updated.booted_at), restartCount: updated.restart_count,
+      });
+    }
+    // OTA: firmware baru melapor = selesai; restart tetapi masih versi lama setelah mulai = rollback.
+    const ota = updated.ota;
+    if (firmware && ota && ['sent', 'started'].includes(ota.status)) {
+      if (firmware === ota.version) await setOta(hwUid, ota.id, { status: 'done', reason: null });
+      else if (ota.status === 'started' && bootedAt && bootedAt > new Date(ota.sentAt)) {
+        await setOta(hwUid, ota.id, { status: 'rolled_back', reason: `kembali ke ${firmware}` });
+      }
+    }
     // Reconnect dengan config lama: kirim ulang versi terbaru (config juga retained di broker).
     const reported = Number(payload?.configVersion);
     if (before.claimed_by && Number.isInteger(reported) && reported < before.config_version && before.config?.version) {
@@ -317,8 +344,26 @@ export function createIotService(ctx) {
     for (const [localId, item] of Object.entries(payload?.actuators || {})) await applyActuatorState(hwUid, localId, item);
   }
 
+  /** Perbarui status OTA terakhir gateway (hanya bila id cocok dengan OTA yang tercatat). */
+  async function setOta(hwUid, id, patch) {
+    const { rows } = await pool.query(
+      `UPDATE gateways SET ota = ota || $3::jsonb WHERE id = $1 AND ota->>'id' = $2 RETURNING ota`,
+      [hwUid, id, { ...patch, updatedAt: new Date().toISOString() }],
+    );
+    if (!rows[0]) return;
+    log.info?.(`[ota] ${hwUid} ${patch.status}${patch.reason ? `: ${patch.reason}` : ''}`);
+    hub.emitGateway(hwUid, 'gateway', { ota: otaView(rows[0].ota) });
+  }
+
+  async function handleOtaAck(hwUid, payload) {
+    const status = ['started', 'rejected', 'failed'].includes(payload?.status) ? payload.status : null;
+    if (!status || typeof payload.id !== 'string') return;
+    await setOta(hwUid, payload.id, { status, reason: typeof payload.reason === 'string' ? payload.reason.slice(0, 60) : null });
+  }
+
   async function handleAck(hwUid, payload) {
     const gateway = await touch(hwUid);
+    if (payload?.type === 'ota') return handleOtaAck(hwUid, payload);   // OTA juga untuk gateway yang belum diklaim
     if (!gateway?.claimed_by) return;
     if (payload?.type === 'command') return handleCommandAck(hwUid, payload);
     if (payload?.type === 'config') return handleConfigAck(hwUid, payload);

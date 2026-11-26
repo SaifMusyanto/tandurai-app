@@ -26,6 +26,9 @@ export function applyGatewayEvent(gateways, event, data) {
         ...gateway,
         ...(typeof data.online === 'boolean' ? { online: data.online } : {}),
         ...(data.lastSeenAt ? { lastSeenAt: data.lastSeenAt } : {}),
+        ...(data.firmware ? { firmware: data.firmware } : {}),
+        ...(data.diagnostics ? { diagnostics: data.diagnostics, bootedAt: data.bootedAt, restartCount: data.restartCount } : {}),
+        ...(data.ota ? { ota: data.ota } : {}),
       }));
     case 'telemetry':
       return patchGateway(gateways, data.gatewayId, gateway => ({
@@ -95,6 +98,36 @@ export function relativeTime(iso, now = Date.now()) {
   if (minutes < 60) return `${minutes} mnt lalu`;
   const hours = Math.floor(minutes / 60);
   return hours < 24 ? `${hours} jam lalu` : `${Math.floor(hours / 24)} hari lalu`;
+}
+
+// Alasan restart dari firmware (diag.resetReason) dalam bahasa pengguna.
+export const RESET_REASON_LABEL = {
+  power_on: 'listrik dinyalakan', external: 'tombol reset', software: 'restart oleh firmware',
+  panic: 'crash firmware', int_wdt: 'watchdog (macet)', task_wdt: 'watchdog (macet)', wdt: 'watchdog (macet)',
+  brownout: 'tegangan drop (brownout)', deepsleep: 'bangun dari sleep', unknown: 'tidak diketahui',
+};
+
+const OTA_STATUS_LABEL = {
+  sent: 'menunggu gateway', started: 'mengunduh', done: 'selesai', failed: 'gagal', rejected: 'ditolak', rolled_back: 'dibatalkan (rollback)',
+};
+
+/** Ringkasan OTA terakhir untuk badge; null bila tidak ada atau sudah selesai > 1 hari. */
+export function otaSummary(ota, now = Date.now()) {
+  if (!ota) return null;
+  const age = now - Date.parse(ota.updatedAt || ota.sentAt);
+  if (ota.status === 'done' && age > 86400000) return null;
+  const tone = ota.status === 'done' ? 'ok' : ['sent', 'started'].includes(ota.status) ? 'busy' : 'bad';
+  return { tone, text: `Update ${ota.version}: ${OTA_STATUS_LABEL[ota.status] || ota.status}${ota.reason ? ` (${ota.reason})` : ''}` };
+}
+
+/** Lama menyala dari detik, mis. "3 hari 4 jam", "12 mnt". */
+export function formatUptime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '—';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days) return `${days} hari ${hours} jam`;
+  return hours ? `${hours} jam ${minutes} mnt` : `${minutes} mnt`;
 }
 
 /** Sisa detik sampai aktuator mati otomatis (null bila tidak sedang ON berwaktu). */

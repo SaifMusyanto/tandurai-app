@@ -67,6 +67,7 @@ export const api = {
   updateMe: input => apiRequest('PATCH', '/me', input),
   settings: () => apiRequest('GET', '/me/settings'),
   saveSettings: settings => apiRequest('PUT', '/me/settings', settings),
+  chat: messages => apiRequest('POST', '/chat', { messages }),
   // farm, anggota, audit
   farms: () => apiRequest('GET', '/farms'),
   createFarm: input => apiRequest('POST', '/farms', input),

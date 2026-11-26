@@ -13,7 +13,7 @@ Page → hook/page state → service → src/lib/api.js (REST) → backend apps/
 
 - `src/firebase.js` hanya menginisialisasi **Firebase Auth** (`initializeApp`, `getAuth`). Enam nilai `VITE_FIREBASE_*` inti wajib; `measurementId` opsional. Realtime Database tidak dipakai lagi oleh web.
 - `src/lib/api.js`: klien REST tunggal (`apiRequest`, `api.*`, `streamUrl`). Setiap request membawa `Authorization: Bearer <Firebase ID token>`; base URL `VITE_API_URL` (fallback `VITE_IOT_API_URL`, default `http://localhost:8787/api`). Error backend dilempar sebagai `ApiError` (`status`, `code`, `message`). `src/lib/iotApi.js` berisi endpoint IoT di atas klien yang sama.
-- `.env.example` mendokumentasikan `VITE_FIREBASE_*`, `VITE_API_URL`, `VITE_CHAT_API_URL` (proxy chat opsional), dan default farm/kumbung/sensor. File `.env` lokal tidak dirinci di dokumen.
+- `.env.example` mendokumentasikan `VITE_FIREBASE_*`, `VITE_API_URL`, dan default farm/kumbung/sensor. Secret/provider chat berada di backend, bukan variabel `VITE_*`. File `.env` lokal tidak dirinci di dokumen.
 - Vite mengekspos variabel `VITE_*` ke browser; rahasia (mis. token bot Telegram) disimpan di backend dan tidak pernah dikirim balik ke client.
 
 ## Otorisasi
@@ -28,7 +28,7 @@ Backend menegakkan akses per farm (pengganti `database.rules.json`): **owner** m
 
 ### IoT gateway
 
-`IotProvider` memuat `GET /gateways` lalu membuka satu SSE `/stream?token=<Firebase ID token>`; event `gateway`/`telemetry`/`actuator`/`config`/`command` diterapkan oleh `src/lib/iot.js`, event `alert`/`forecast`/`changed`/`ready` diteruskan ke pelanggan `subscribe`. `/devices` (klaim ke farm dengan UID + kode; owner menempatkan sensor/aktuator dan melepas gateway), `ActuatorControlPanel` di Automation (ON/OFF/E-STOP; status dari ACK gateway; mode Manual/Timer/Auto dengan Pending Sync).
+`IotProvider` memuat `GET /gateways` lalu membuka satu SSE `/stream?token=<Firebase ID token>`; event `gateway`/`telemetry`/`actuator`/`config`/`command` diterapkan oleh `src/lib/iot.js`, termasuk firmware, diagnostik restart/uptime, dan status OTA pada gateway. Event `alert`/`forecast`/`changed`/`ready` diteruskan ke pelanggan `subscribe`. `/devices` (klaim ke farm dengan UID + kode; owner menempatkan sensor/aktuator dan melepas gateway), `ActuatorControlPanel` di Automation (ON/OFF/E-STOP; status dari ACK gateway; mode Manual/Timer/Auto dengan Pending Sync).
 
 ### Telemetry
 
@@ -75,7 +75,7 @@ Alert dievaluasi backend saat telemetry masuk (suhu tinggi, kelembapan rendah, C
 - Farm Health Score: `src/lib/healthScore.js` (rata-rata 30 menit terakhir terhadap `ranges` & `thresholds`).
 - OpenStreetMap Nominatim: reverse geocoding di General tab `SettingsPage`.
 - Telegram Bot API: dipanggil backend (notifikasi alert dan pesan uji), bukan browser.
-- Chat endpoint opsional melalui `VITE_CHAT_API_URL` dipakai `HomePage`; endpoint tidak dikonfigurasi di template.
+- Groq Chat API dipanggil server-side oleh `apps/api` melalui `POST /chat`; `HomePage` memakai `api.chat`, Firebase ID token tetap wajib, dan `GROQ_API_KEY` tidak masuk bundle browser.
 
 ## Modul data/config penting
 
@@ -98,4 +98,3 @@ Alert dievaluasi backend saat telemetry masuk (suhu tinggi, kelembapan rendah, C
   - Registrasi Perangkat (`GET/POST /admin/devices`); gateway yang sudah diklaim punya aksi "Lepas" (`DELETE /gateways/:id`, sama dengan owner) tanpa perlu membuka farm klien.
 - **Membuka farm klien:** "Buka dashboard farm" (`enterFarmAsAdmin`) menyimpan mode farm di `sessionStorage` (`tandurai.adminFarmView`, per tab) dan menampilkan banner "Mode admin". "Kembali ke Konsol Admin" atau membuka rute `/admin` keluar dari mode farm. Perubahan oleh admin tercatat dengan uid admin di audit farm.
 - Pengguna biasa yang membuka `/admin*` diarahkan ke `/`; backend tetap menolak dengan 403.
-

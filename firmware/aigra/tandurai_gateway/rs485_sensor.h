@@ -1,4 +1,4 @@
-// rs485_sensor.h - Sensor RS-O2WS-N01 (O₂, suhu, kelembapan) lewat RS485 Modbus RTU.
+// rs485_sensor.h - Sensor CO₂ + suhu + kelembapan lewat RS485 Modbus RTU (pengganti RS-O2WS-N01).
 // Diambil dari sensor_oled.ino.
 #pragma once
 #include "hardware.h"
@@ -7,7 +7,7 @@ namespace rs485 {
 
 struct State {
   bool detected; uint8_t fails;
-  float o2, temp, hum;
+  float co2, temp, hum;
   uint32_t lastOkMs;
 } rs = {};
 
@@ -35,6 +35,7 @@ bool modbusRead(uint8_t addr, uint16_t start, uint16_t count, uint16_t* out) {
 
   size_t want = 5 + 2 * count, got = 0;
   uint8_t resp[32];
+  if (want > sizeof resp) return false;
   uint32_t t0 = millis();
   while (got < want && millis() - t0 < 300) {
     if (Serial2.available()) resp[got++] = Serial2.read();
@@ -59,23 +60,29 @@ void poll() {
   if (millis() - lastPoll < RS485_POLL_S * 1000UL) return;
   lastPoll = millis();
 
-  uint16_t r[3];
-  if (modbusRead(RS485_ADDR, 0x0000, 3, r)) {
+  // Satu permintaan dari register 0 sampai register CO₂ (maks 8 register, muat di buffer respons).
+  const uint16_t count = RS485_CO2_REG + 1;
+  uint16_t r[8];
+  if (modbusRead(RS485_ADDR, 0x0000, count, r)) {
     rs.hum  = r[0] / 10.0f;
     rs.temp = (int16_t)r[1] / 10.0f;
-    rs.o2   = r[2] / 10.0f;
+    rs.co2  = r[RS485_CO2_REG];
     rs.fails = 0;
     rs.lastOkMs = millis();
     if (!rs.detected) {
       rs.detected = true;
       lastPrint = 0;
       Serial.println(">>> Sensor RS485 terdeteksi");
+      // Nilai mentah untuk mencocokkan register dengan datasheet (mis. CO₂ ruangan ±400-2000 ppm).
+      Serial.print("    register mentah:");
+      for (uint16_t i = 0; i < count; i++) Serial.printf(" [%u]=%u", i, r[i]);
+      Serial.println();
     }
     if (lastPrint == 0 || millis() - lastPrint >= RS485_PRINT_S * 1000UL) {
       lastPrint = millis();
       Serial.println("----------------------------------------");
       Serial.println("Source: RS485");
-      Serial.printf("  %-12s: %.1f %%VOL\n", "O2", rs.o2);
+      Serial.printf("  %-12s: %.0f ppm\n", "CO2", rs.co2);
       Serial.printf("  %-12s: %.1f C\n", "Suhu", rs.temp);
       Serial.printf("  %-12s: %.1f %%RH\n", "Kelembapan", rs.hum);
     }
@@ -88,11 +95,12 @@ void poll() {
   }
 }
 
-// Ambil suhu, kelembapan, CO₂ (urut SENSOR_METRICS). Sensor ini tidak punya CO₂ → NAN.
+// Ambil suhu, kelembapan, CO₂ (urut SENSOR_METRICS).
 bool takeReading(float v[3]) {
   if (!rs.detected || millis() - rs.lastOkMs > RS485_POLL_S * 2000UL + 1000UL) return false;
   v[0] = rs.temp;
   v[1] = rs.hum;
+  v[2] = rs.co2;
   return true;
 }
 

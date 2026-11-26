@@ -50,5 +50,10 @@ export function readConfig(env = process.env) {
     adminEmails: (env.ADMIN_EMAILS || '').split(',').map(item => item.trim().toLowerCase()).filter(Boolean),
     // Token API internal AI worker lokal (≥ 16 karakter); kosong = API worker nonaktif.
     workerToken: env.WORKER_TOKEN || '',
+    // File firmware gateway (.bin) untuk OTA, disajikan publik di /api/firmware/<nama>.bin.
+    firmwareDir: env.FIRMWARE_DIR || join(API_ROOT, 'firmware'),
+    // Chatbot dashboard lewat Groq (tier gratis). Kosong = chat AI nonaktif.
+    groqApiKey: env.GROQ_API_KEY || '',
+    groqModel: env.GROQ_MODEL || 'openai/gpt-oss-120b',
   });
 }

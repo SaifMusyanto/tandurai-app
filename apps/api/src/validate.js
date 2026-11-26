@@ -73,6 +73,28 @@ export function cleanReadings(values, allowedMetrics) {
   return clean;
 }
 
+const RESET_REASONS = new Set(['power_on', 'external', 'software', 'panic', 'int_wdt', 'task_wdt', 'wdt', 'brownout', 'deepsleep', 'unknown']);
+const counter = value => (Number.isInteger(value) && value >= 0 && value <= 2 ** 32 ? value : undefined);
+
+/**
+ * Diagnostik dari pesan status (firmware ≥ 0.4.0): `uptimeSec` + objek `diag`.
+ * Field asing dibuang; null bila tidak ada yang valid (firmware lama).
+ */
+export function cleanDiagnostics(payload) {
+  const diag = payload?.diag && typeof payload.diag === 'object' ? payload.diag : {};
+  const clean = {
+    uptimeSec: counter(payload?.uptimeSec),
+    resetReason: RESET_REASONS.has(diag.resetReason) ? diag.resetReason : undefined,
+    wifiDrops: counter(diag.wifiDrops),
+    mqttDrops: counter(diag.mqttDrops),
+    wifiReason: counter(diag.wifiReason),
+    freeHeap: counter(diag.freeHeap),
+    minFreeHeap: counter(diag.minFreeHeap),
+  };
+  for (const key of Object.keys(clean)) if (clean[key] === undefined) delete clean[key];
+  return Object.keys(clean).length ? clean : null;
+}
+
 /** Timestamp perangkat (ms) dipakai bila wajar; selain itu waktu server. */
 export function deviceTime(ts, now = Date.now()) {
   const value = Number(ts);
