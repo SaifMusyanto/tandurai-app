@@ -30,6 +30,7 @@
 #include <WebServer.h>
 #include <time.h>
 #include <sys/time.h>
+#include <esp_timer.h>
 #if __has_include("ca_cert.h")
 #include "ca_cert.h"   // opsional: #define TANDURAI_CA_CERT "..." untuk mengganti CA bawaan di bawah
 #endif
@@ -41,7 +42,7 @@
 struct Schedule;
 struct LocalClock;
 
-#define FIRMWARE_VERSION "esp32-gw/0.4.0"
+#define FIRMWARE_VERSION "esp32-gw/0.4.1"
 #define TANDURAI_MODEL "TDR-GW1"
 const int SETUP_BUTTON_PIN = 0;   // tombol BOOT ESP32
 
@@ -149,11 +150,11 @@ MQTTClient mqtt(8192);   // buffer cukup untuk config berisi jadwal & aturan
 Preferences nvs;
 
 // ─────────────────────────── STATE ───────────────────────────
-struct Schedule { char id[17]; bool at; int atMinute; uint32_t intervalSec; uint32_t onSec; int winStart; int winEnd; uint8_t daysMask; };
+struct Schedule { char id[17]; bool at; int atMinute; uint64_t intervalSec; uint64_t onSec; int winStart; int winEnd; uint8_t daysMask; };
 struct Rule { char id[17]; char sensor[17]; char metric[16]; bool below; float threshold; bool stopDuration; uint32_t onSec; float stopValue; uint32_t cooldownSec; };
 struct ActuatorCfg { char mode; uint32_t maxRunSec; uint32_t minIntervalSec; Schedule schedules[MAX_SCHEDULES]; int nSchedules; Rule rules[MAX_RULES]; int nRules; bool present; };
 struct Relay {
-  bool on = false; String source = "boot"; uint64_t sinceMs = 0; uint32_t offAtMillis = 0; uint32_t lastOnMillis = 0;
+  bool on = false; String source = "boot"; uint64_t sinceMs = 0; uint64_t offAtMonotonicMs = 0; uint32_t lastOnMillis = 0;
   bool hold = false, override_ = false; String triggerKind; String triggerId; uint32_t resumeAtMillis = 0;
   uint64_t nextEveryMs[MAX_SCHEDULES]; int firedDay[MAX_SCHEDULES]; int firedMinute[MAX_SCHEDULES];
 };
@@ -180,6 +181,7 @@ uint64_t epochMs() {
   struct timeval tv; gettimeofday(&tv, nullptr);
   return (uint64_t)tv.tv_sec * 1000ULL + tv.tv_usec / 1000;
 }
+uint64_t monotonicMs() { return (uint64_t)esp_timer_get_time() / 1000ULL; }
 struct LocalClock { int minute; int day; int date; };
 LocalClock localClock() {
   time_t local = time(nullptr) + utcOffsetMin * 60;
@@ -203,12 +205,15 @@ void publishState(int only = -1);
 
 void writePin(int i, bool on) { digitalWrite(ACTUATORS[i].pin, (on == ACTUATORS[i].activeHigh) ? HIGH : LOW); }
 
-void setRelay(int i, bool on, const String &source, uint32_t durationSec = 0, const String &triggerKind = "", const String &triggerId = "") {
+void setRelay(int i, bool on, const String &source, uint64_t durationSec = 0, const String &triggerKind = "", const String &triggerId = "", bool enforceMaxRun = true) {
   Relay &r = relays[i];
-  r.on = on; r.source = source; r.sinceMs = epochMs(); r.offAtMillis = 0;
+  r.on = on; r.source = source; r.sinceMs = epochMs(); r.offAtMonotonicMs = 0;
   if (on) {
-    uint32_t seconds = max<uint32_t>(1, min(durationSec, maxRunOf(i)));   // tidak pernah melebihi maxRunSec
-    r.offAtMillis = millis() + seconds * 1000UL; r.lastOnMillis = millis();
+    uint64_t seconds = durationSec ? durationSec : 1;
+    if (enforceMaxRun && seconds > maxRunOf(i)) seconds = maxRunOf(i);   // manual/otomatis tetap diproteksi
+    uint64_t now = monotonicMs(), room = (UINT64_MAX - now) / 1000ULL;
+    if (seconds > room) seconds = room;                                  // saturasi teknis; tidak membatasi durasi normal
+    r.offAtMonotonicMs = now + seconds * 1000ULL; r.lastOnMillis = millis();
     r.triggerKind = triggerKind; r.triggerId = triggerId;
   } else {
     r.override_ = false; r.triggerKind = ""; r.triggerId = "";
@@ -263,7 +268,8 @@ void publishState(int only) {
     a["mode"] = cfg[i].mode == 't' ? "timer" : cfg[i].mode == 'a' ? "auto" : "manual";
     a["source"] = r.source; a["since"] = r.sinceMs; a["override"] = r.override_;
     if (r.on) {
-      a["offAt"] = epochMs() + (uint64_t)(r.offAtMillis - millis());
+      uint64_t now = monotonicMs();
+      a["offAt"] = epochMs() + (r.offAtMonotonicMs > now ? r.offAtMonotonicMs - now : 0);
       if (r.triggerKind.length()) a["trigger"][r.triggerKind] = r.triggerId; else a["trigger"] = nullptr;
     }
   }
@@ -309,7 +315,8 @@ void parseConfig(JsonDocument &doc) {
       strlcpy(x.id, s["id"] | "", sizeof(x.id));
       x.at = !strcmp(s["type"] | "", "at");
       x.atMinute = parseHHMM(s["at"] | "");
-      x.intervalSec = s["intervalSec"] | 0; x.onSec = s["onSec"] | 1;
+      x.intervalSec = s["intervalSec"].as<uint64_t>(); x.onSec = s["onSec"].as<uint64_t>();
+      if (!x.onSec) x.onSec = 1;
       const char *w = s["window"] | "";
       x.winStart = strlen(w) == 11 ? parseHHMM(w) : -1; x.winEnd = strlen(w) == 11 ? parseHHMM(w + 6) : -1;
       x.daysMask = 0;
@@ -415,7 +422,10 @@ void ackCommand(const String &id, int i, const char *status, const char *reason)
   JsonDocument ack;
   ack["type"] = "command"; ack["id"] = id; ack["status"] = status;
   if (reason) ack["reason"] = reason; else ack["reason"] = nullptr;
-  if (i >= 0) { ack["state"] = relays[i].on ? "on" : "off"; if (relays[i].on) ack["offAt"] = epochMs() + (uint64_t)(relays[i].offAtMillis - millis()); }
+  if (i >= 0) {
+    ack["state"] = relays[i].on ? "on" : "off";
+    if (relays[i].on) { uint64_t now = monotonicMs(); ack["offAt"] = epochMs() + (relays[i].offAtMonotonicMs > now ? relays[i].offAtMonotonicMs - now : 0); }
+  }
   publishJson("ack", ack, false, 1);
   if (i >= 0) publishState(i);
 }
@@ -499,12 +509,12 @@ void runSchedules(int i) {
     if (s.at) {
       if (c.minute != s.atMinute || (r.firedDay[k] == c.date && r.firedMinute[k] == c.minute)) continue;
       r.firedDay[k] = c.date; r.firedMinute[k] = c.minute;
-      if (!r.on) { setRelay(i, true, "timer", s.onSec, "schedule", s.id); publishState(i); }
+      if (!r.on) { setRelay(i, true, "timer", s.onSec, "schedule", s.id, false); publishState(i); }
     } else if (inWindow(s, c.minute)) {
       uint64_t now = epochMs();
       if (!r.nextEveryMs[k]) r.nextEveryMs[k] = now;
       if (now >= r.nextEveryMs[k] && !r.on) {
-        setRelay(i, true, "timer", s.onSec, "schedule", s.id);
+        setRelay(i, true, "timer", s.onSec, "schedule", s.id, false);
         r.nextEveryMs[k] = now + (uint64_t)s.intervalSec * 1000ULL;
         publishState(i);
       }
@@ -542,7 +552,7 @@ void runRules(int i) {
 void tick() {
   for (int i = 0; i < ACTUATOR_COUNT; i++) {
     Relay &r = relays[i];
-    if (r.on && (int32_t)(millis() - r.offAtMillis) >= 0) {     // durasi habis / batas maxRunSec
+    if (r.on && monotonicMs() >= r.offAtMonotonicMs) {          // durasi jadwal / batas manual-otomatis habis
       if (r.source == "auto") pauseEngine(i);
       setRelay(i, false, r.source); publishState(i);
     }

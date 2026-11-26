@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import DurationInput, { durationSeconds, splitDuration } from '@/components/iot/DurationInput';
 import DataTable from '@/components/DataTable';
 import { useIot } from '@/contexts/IotContext';
-import { DAY_SHORT, MODE_LABEL, daysLabel, describeSchedule, formatDuration, nextMode } from '@/lib/iot';
+import { DAY_SHORT, MODE_LABEL, daysLabel, describeSchedule, nextMode } from '@/lib/iot';
 
 const ALL_DAYS = [1, 2, 3, 4, 5, 6, 7];
 const emptyForm = actuatorId => ({
@@ -124,7 +124,7 @@ function ScheduleDialog({ open, items, editing, onClose }) {
                 <Label htmlFor="schedule-at" className="text-xs">Jam</Label>
                 <Input id="schedule-at" type="time" value={form.at} onChange={event => set({ at: event.target.value })} className="h-9 w-32" required />
               </div>
-              <DurationInput id="schedule-on" label="Nyala selama" duration={form.on} onChange={on => set({ on })} hint={target ? `maks ${formatDuration(target.actuator.maxRunSec)}` : ''} />
+              <DurationInput id="schedule-on" label="Nyala selama" duration={form.on} onChange={on => set({ on })} hint="tanpa batas durasi" />
             </div>
           ) : (
             <div className="space-y-3">
@@ -133,7 +133,7 @@ function ScheduleDialog({ open, items, editing, onClose }) {
                   <Label htmlFor="schedule-every" className="text-xs">Setiap (menit)</Label>
                   <Input id="schedule-every" type="number" min={1} value={form.every} onChange={event => set({ every: event.target.value })} className="h-9 w-24" required />
                 </div>
-                <DurationInput id="schedule-on" label="Nyala selama" duration={form.on} onChange={on => set({ on })} hint={target ? `maks ${formatDuration(target.actuator.maxRunSec)}` : ''} />
+                <DurationInput id="schedule-on" label="Nyala selama" duration={form.on} onChange={on => set({ on })} hint="harus lebih singkat dari interval" />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="schedule-start" className="text-xs">Hanya antara jam (opsional)</Label>

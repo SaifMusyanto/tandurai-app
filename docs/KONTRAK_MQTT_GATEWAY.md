@@ -60,7 +60,7 @@ Semua JSON UTF-8. Waktu dalam **milidetik epoch** dari jam SNTP.
 - `id` lokal: `[A-Za-z0-9_]{1,16}`, unik dalam perangkat (sensor dan aktuator tidak boleh berbagi ID). Maks 32 sensor, 16 aktuator.
 - **Setiap sensor membaca tepat 3 parameter:** `temperature` (−10…60 °C), `humidity` (0…100 %), `co2` (0…10000 ppm). Tidak perlu mengirim `metrics`; bila dikirim, diabaikan. `type` sensor opsional (info model).
 - `type` aktuator: `sprayer`, `fan`, `humidifier`, `pump`, `light`, `heater`, `other`.
-- `maxRunSec` (1…86400) = **batas keras hardware**; `minIntervalSec` = jeda minimal antar-ON.
+- `maxRunSec` (1…86400) = batas pengaman untuk perintah manual dan aturan otomatis; mode Jadwal memakai `onSec` yang dikonfigurasi tanpa dipotong batas ini. `minIntervalSec` = jeda minimal antar-ON.
 - Setelah perangkat diklaim user, sensor/aktuator baru di `register` ditambahkan otomatis; yang lama tidak dihapus. Perubahan `type`/`metrics` sensor yang sudah ada ikut diperbarui.
 - Tiap sensor dikirim terpisah (`S1`, `S2`, …); dashboard menampilkan per sensor atau rata-rata kumbung.
 
@@ -192,9 +192,9 @@ Penanganan:
 
 | Prioritas | Aturan |
 |---|---|
-| 1. Proteksi | Relay OFF saat boot/watchdog reset; ON tidak pernah melebihi `maxRunSec`; `estop` selalu berlaku. Watchdog: loop macet > 60 dtk → restart (koneksi jaringan dibatasi 10 dtk connect + 10 dtk handshake TLS agar tidak memicunya). |
+| 1. Proteksi | Relay OFF saat boot/watchdog reset; ON manual dan otomatis tidak pernah melebihi `maxRunSec`; `estop` selalu berlaku. Jadwal timer boleh lebih lama dari `maxRunSec` sesuai `onSec`. Watchdog: loop macet > 60 dtk → restart (koneksi jaringan dibatasi 10 dtk connect + 10 dtk handshake TLS agar tidak memicunya). |
 | 2. Override manual | `cmd` `on` saat `timer`/`auto` menahan engine aktuator itu sampai relay mati (lihat §4.1 butir 6). |
-| 3. Mode aktif | `manual`: hanya `cmd` (dan tombol fisik). `timer`: tiap jadwal — `at`: ON `onSec` sekali pada menit `at` di hari `days`; `every`: ON `onSec` tiap `intervalSec` di dalam `window` (opsional) pada hari `days`; bila relay sudah ON, pemicu dilewati. `auto`: saat relay OFF dan jeda lewat, aturan pertama yang kondisinya terpenuhi (`operator` `below`/`above` `threshold`) menyalakan relay (`trigger.rule`). OFF ketika `stop.type: "duration"` habis (`onSec`) atau `stop.type: "value"` tercapai (`below` → nilai ≥ `stop.value`; `above` → nilai ≤ `stop.value`). ON otomatis tetap dibatasi `maxRunSec`. Setelah mati, aturan menunggu `cooldownSec`; setelah OFF manual, tunggu `cooldownSec` terbesar. |
+| 3. Mode aktif | `manual`: hanya `cmd` (dan tombol fisik). `timer`: tiap jadwal — `at`: ON selama `onSec` tanpa batas `maxRunSec`, sekali pada menit `at` di hari `days`; `every`: ON selama `onSec` tiap `intervalSec` di dalam `window` (opsional) pada hari `days`, dengan `onSec < intervalSec`; bila relay sudah ON, pemicu dilewati. `auto`: saat relay OFF dan jeda lewat, aturan pertama yang kondisinya terpenuhi (`operator` `below`/`above` `threshold`) menyalakan relay (`trigger.rule`). OFF ketika `stop.type: "duration"` habis (`onSec`) atau `stop.type: "value"` tercapai (`below` → nilai ≥ `stop.value`; `above` → nilai ≤ `stop.value`). ON otomatis tetap dibatasi `maxRunSec`. Setelah mati, aturan menunggu `cooldownSec`; setelah OFF manual, tunggu `cooldownSec` terbesar. |
 | 4. Sensor acuan `auto` tidak terbaca > 180 dtk | Relay OFF, `source: "protection"`. |
 
 Engine jadwal/otomatis berjalan dari config NVS **walau MQTT/Wi-Fi terputus**.

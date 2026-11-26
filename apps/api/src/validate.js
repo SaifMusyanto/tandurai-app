@@ -107,7 +107,7 @@ export const MAX_SCHEDULES = 12;
 const ALL_DAYS = [1, 2, 3, 4, 5, 6, 7];
 
 /** Satu jadwal: `at` (jam tertentu) atau `every` (berulang dalam rentang jam), hari ISO 1=Senin…7=Minggu. */
-function validateSchedule(item, index, maxRun) {
+function validateSchedule(item, index) {
   const label = `Jadwal ${index + 1}`;
   const bad = message => new HttpError(400, 'invalid_schedule', `${label}: ${message}`);
   if (!item || typeof item !== 'object') throw bad('format tidak valid.');
@@ -119,13 +119,13 @@ function validateSchedule(item, index, maxRun) {
   const base = { id, type: item.type, enabled: item.enabled !== false, days: [...days].sort((a, b) => a - b) };
   if (item.type === 'at') {
     if (!TIME.test(item.at || '')) throw bad('jam harus HH:MM.');
-    if (!isInt(item.onSec, 1, maxRun)) throw bad(`lama nyala 1–${maxRun} detik.`);
+    if (!Number.isSafeInteger(item.onSec) || item.onSec < 1) throw bad('lama nyala harus bilangan bulat positif.');
     return { ...base, at: item.at, onSec: item.onSec };
   }
   if (item.type === 'every') {
-    if (!isInt(item.intervalSec, 60, 86400)) throw bad('interval 1 menit – 24 jam.');
-    if (!isInt(item.onSec, 1, Math.min(maxRun, item.intervalSec - 1))) {
-      throw bad(`lama nyala 1–${Math.min(maxRun, item.intervalSec - 1)} detik (≤ batas aktuator dan < interval).`);
+    if (!Number.isSafeInteger(item.intervalSec) || item.intervalSec < 60) throw bad('interval minimal 1 menit.');
+    if (!Number.isSafeInteger(item.onSec) || item.onSec < 1 || item.onSec >= item.intervalSec) {
+      throw bad(`lama nyala harus bilangan bulat positif dan lebih pendek dari interval (${item.intervalSec} detik).`);
     }
     const window = item.window === undefined || item.window === null || item.window === '' ? null : item.window;
     if (window !== null && !WINDOW.test(window)) throw bad('rentang jam harus HH:MM-HH:MM.');
@@ -189,7 +189,7 @@ export function validateActuatorConfig(input, actuator, sensors) {
     if (!Array.isArray(input.schedules) || input.schedules.length > MAX_SCHEDULES) {
       throw new HttpError(400, 'invalid_schedule', `Maksimal ${MAX_SCHEDULES} jadwal per aktuator.`);
     }
-    schedules = input.schedules.map((item, index) => validateSchedule(item, index, maxRun));
+    schedules = input.schedules.map((item, index) => validateSchedule(item, index));
     if (new Set(schedules.map(item => item.id)).size !== schedules.length) throw new HttpError(400, 'invalid_schedule', 'ID jadwal ganda.');
   }
 

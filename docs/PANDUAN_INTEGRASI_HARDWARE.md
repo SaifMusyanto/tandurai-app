@@ -90,7 +90,7 @@ Device secret hanya muncul sekali (yang tersimpan di database hanya hash). Bila 
 **Sekali saja (membuat firmware):** penuhi kontrak MQTT. Titik awal: `firmware/tandurai-gateway/tandurai-gateway.ino` (**belum dikompilasi/diuji di hardware**).
 1. Arduino IDE + board ESP32; library **MQTT** (Joel Gaehwiler / 256dpi) dan **ArduinoJson v7**.
 2. Sesuaikan bagian **HARDWARE**: daftar sensor (`S1`, `S2`, … — tiap sensor selalu membaca suhu, kelembapan, CO₂), aktuator (`A1`… + pin relay, `maxRunSec`), dan isi `readSensor()` dengan driver sensor asli.
-3. Yang sudah ditangani sketch: login MQTT (clientId = username = hwUid), LWT, register/status/state/telemetry, perintah manual + ACK + anti-duplikat, config di NVS + ACK, jadwal & aturan otomatis lokal, override manual, relay OFF saat boot, batas `maxRunSec`.
+3. Yang sudah ditangani sketch: login MQTT (clientId = username = hwUid), LWT, register/status/state/telemetry, perintah manual + ACK + anti-duplikat, config di NVS + ACK, jadwal & aturan otomatis lokal, override manual, relay OFF saat boot, serta batas `maxRunSec` untuk manual/otomatis. Durasi mode Jadwal mengikuti `onSec` tanpa dipotong `maxRunSec`.
 
 **Tiap unit baru (tanpa koding):**
 1. Flash firmware yang sama.

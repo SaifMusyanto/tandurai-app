@@ -4,10 +4,14 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 /** { value, unit } ↔ detik. */
-export const splitDuration = sec => (sec >= 60 && sec % 60 === 0 ? { value: String(sec / 60), unit: 'min' } : { value: String(sec), unit: 'sec' });
-export const durationSeconds = ({ value, unit }) => Math.round(Number(value) * (unit === 'min' ? 60 : 1));
+export const splitDuration = sec => (sec >= 3600 && sec % 3600 === 0
+  ? { value: String(sec / 3600), unit: 'hour' }
+  : sec >= 60 && sec % 60 === 0
+    ? { value: String(sec / 60), unit: 'min' }
+    : { value: String(sec), unit: 'sec' });
+export const durationSeconds = ({ value, unit }) => Math.round(Number(value) * (unit === 'hour' ? 3600 : unit === 'min' ? 60 : 1));
 
-/** Input durasi dengan satuan detik/menit. `duration` = { value, unit }. */
+/** Input durasi dengan satuan detik/menit/jam. `duration` = { value, unit }. */
 export default function DurationInput({ id, label, duration, onChange, hint }) {
   return (
     <div className="space-y-1">
@@ -20,6 +24,7 @@ export default function DurationInput({ id, label, duration, onChange, hint }) {
           <SelectContent>
             <SelectItem value="sec">detik</SelectItem>
             <SelectItem value="min">menit</SelectItem>
+            <SelectItem value="hour">jam</SelectItem>
           </SelectContent>
         </Select>
       </div>

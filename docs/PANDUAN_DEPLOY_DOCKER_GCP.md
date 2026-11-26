@@ -244,15 +244,15 @@ Gateway dengan firmware ≥ 0.4.0 yang di-flash memakai partisi **Minimal SPIFFS
 1. **Laptop:** compile, ambil file aplikasinya (`*.ino.bin`, **bukan** `*.merged.bin`):
    ```powershell
    arduino-cli compile --fqbn "esp32:esp32:esp32:PartitionScheme=min_spiffs" --output-dir out firmware/aigra/tandurai_gateway
-   scp out/tandurai_gateway.ino.bin <user>@<VM>:/tmp/tandurai-gw-aigra-0.4.1.bin
+   scp out/tandurai_gateway.ino.bin <user>@<VM>:/tmp/tandurai-gw-aigra-0.4.2.bin
    ```
    Naikkan `FIRMWARE_VERSION` di sketch setiap rilis; gateway menolak versi yang sama dengan yang sedang berjalan.
 2. **VM:** letakkan di `deploy/firmware/` lalu kirim:
    ```bash
-   sudo mv /tmp/tandurai-gw-aigra-0.4.1.bin /home/service/tandurai/deploy/firmware/
+   sudo mv /tmp/tandurai-gw-aigra-0.4.2.bin /home/service/tandurai/deploy/firmware/
    cd /home/service/tandurai/deploy
-   sudo docker compose exec api node apps/api/tools/ota.mjs --file tandurai-gw-aigra-0.4.1.bin --hw-uid TDR-XXXXXXXXXXXX --dry-run
-   sudo docker compose exec api node apps/api/tools/ota.mjs --file tandurai-gw-aigra-0.4.1.bin --hw-uid TDR-XXXXXXXXXXXX
+   sudo docker compose exec api node apps/api/tools/ota.mjs --file tandurai-gw-aigra-0.4.2.bin --hw-uid TDR-XXXXXXXXXXXX --dry-run
+   sudo docker compose exec api node apps/api/tools/ota.mjs --file tandurai-gw-aigra-0.4.2.bin --hw-uid TDR-XXXXXXXXXXXX
    ```
    `--all` mengirim ke semua gateway online dengan versi berbeda. Uji dulu ke satu unit.
 3. Tool memantau hasil: `started` → (±1 menit) `done` saat gateway melapor versi baru. Status juga tampil di kartu gateway dashboard (badge *Update …*).

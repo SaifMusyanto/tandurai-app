@@ -54,17 +54,18 @@ test('telemetry: nilai di luar rentang dibuang; timestamp tidak wajar memakai wa
   assert.equal(deviceTime('x', now), now);
 });
 
-test('config aktuator: jadwal ganda, batas bawah/atas, proteksi max ON', () => {
+test('config aktuator: jadwal tanpa batas maxRun, aturan otomatis tetap diproteksi', () => {
   const actuator = { max_run_sec: 120, schedules: [], auto: null };
   const sensors = [{ id: 'G-S1', localId: 'S1', metrics: ['humidity'] }];
   const timer = validateActuatorConfig({ mode: 'timer', schedules: [
-    { id: 'pagi', type: 'at', at: '07:00', onSec: 60, days: [1, 3, 5] },
-    { type: 'every', intervalSec: 3600, onSec: 120, window: '06:00-18:00', enabled: false },
+    { id: 'pagi', type: 'at', at: '07:00', onSec: 7200, days: [1, 3, 5] },
+    { type: 'every', intervalSec: 14400, onSec: 7200, window: '06:00-18:00', enabled: false },
   ] }, actuator, sensors);
-  assert.deepEqual(timer.schedules[0], { id: 'pagi', type: 'at', enabled: true, days: [1, 3, 5], at: '07:00', onSec: 60 });
+  assert.deepEqual(timer.schedules[0], { id: 'pagi', type: 'at', enabled: true, days: [1, 3, 5], at: '07:00', onSec: 7200 });
   assert.equal(timer.schedules[1].days.length, 7, 'default setiap hari');
   assert.match(timer.schedules[1].id, /^[0-9a-f]{8}$/, 'ID dibuat bila kosong');
-  assert.throws(() => validateActuatorConfig({ mode: 'timer', schedules: [{ type: 'at', at: '07:00', onSec: 300 }] }, actuator, sensors), /lama nyala/);
+  assert.throws(() => validateActuatorConfig({ mode: 'timer', schedules: [{ type: 'at', at: '07:00', onSec: 0 }] }, actuator, sensors), /bilangan bulat positif/);
+  assert.throws(() => validateActuatorConfig({ mode: 'timer', schedules: [{ type: 'every', intervalSec: 3600, onSec: 3600 }] }, actuator, sensors), /lebih pendek dari interval/);
   assert.throws(() => validateActuatorConfig({ mode: 'timer', schedules: [{ type: 'at', at: '25:00', onSec: 10 }] }, actuator, sensors), /HH:MM/);
   assert.throws(() => validateActuatorConfig({ mode: 'timer', schedules: [{ type: 'at', at: '07:00', onSec: 10, days: [] }] }, actuator, sensors), /hari/);
   assert.throws(() => validateActuatorConfig({ mode: 'timer', schedules: [{ type: 'at', at: '07:00', onSec: 10, enabled: false }] }, actuator, sensors), /minimal satu jadwal aktif/);
